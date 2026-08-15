@@ -1,0 +1,20 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "module description"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "DeepSeek Harness desktop client"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "DeepSeek Harness"
+    },
+    {
+      "name": "permission_internet_reason",
+      "value": "Access local DeepSeek Harness web service at 127.0.0.1:3080"
+    }
+  ]
+}
