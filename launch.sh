@@ -23,8 +23,8 @@ ABILITY_NAME="${BUNDLE_NAME}.EntryAbility"
 # --- locate hdc ---
 if command -v hdc >/dev/null 2>&1; then
   HDC=hdc
-elif [ -x "/Applications/DevEco-Studio-26.0.0.app/Contents/sdk/default/openharmony/toolchains/hdc" ]; then
-  HDC="/Applications/DevEco-Studio-26.0.0.app/Contents/sdk/default/openharmony/toolchains/hdc"
+elif [ -x "/Applications/DevEco-Studio-6.1.0.app/Contents/sdk/default/openharmony/toolchains/hdc" ]; then
+  HDC="/Applications/DevEco-Studio-6.1.0.app/Contents/sdk/default/openharmony/toolchains/hdc"
 else
   echo "ERROR: hdc not found. Add it to PATH or update DEVECO_SDK_HOME." >&2
   exit 1

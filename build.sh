@@ -7,9 +7,9 @@
 
 set -euo pipefail
 
-export NODE_HOME="/Applications/DevEco-Studio-26.0.0.app/Contents/tools/node"
-export DEVECO_SDK_HOME="/Applications/DevEco-Studio-26.0.0.app/Contents/sdk"
-export DEVECO_HOME="/Applications/DevEco-Studio-26.0.0.app"
+export NODE_HOME="/Applications/DevEco-Studio-6.1.0.app/Contents/tools/node"
+export DEVECO_SDK_HOME="/Applications/DevEco-Studio-6.1.0.app/Contents/sdk"
+export DEVECO_HOME="/Applications/DevEco-Studio-6.1.0.app"
 export PATH="${NODE_HOME}/bin:${PATH}"
 
 MODE="${1:-release}"

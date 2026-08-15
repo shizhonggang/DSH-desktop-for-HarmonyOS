@@ -49,7 +49,7 @@ HAP 是纯 Web 客户端；Host（`dsh web`）跑在系统侧，与 Electron 版
 
 ## 环境要求
 
-- DevEco Studio 26.0.0.461（含 HarmonyOS SDK 26.0.0（Beta1，version 26.0.0.23）/ hvigor 6.26.1）
+- DevEco Studio 6.1.0.860（含 HarmonyOS SDK 6.1.0（API 23，version 6.1.0.105）/ hvigor 6.23.7）
 - HarmonyOS / OpenHarmony `2in1` 设备或模拟器
 - 系统侧已安装并可运行 `dsh web`（Node.js）
 
