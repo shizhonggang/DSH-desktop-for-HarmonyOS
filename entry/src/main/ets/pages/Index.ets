@@ -15,7 +15,7 @@
 
 import { webview } from '@kit.ArkWeb';
 import { http } from '@kit.NetworkKit';
-import { window } from '@kit.ArkUI';
+import { window, display } from '@kit.ArkUI';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 
@@ -42,12 +42,30 @@ struct Index {
   private readonly DSH_WEB_URL = 'http://127.0.0.1:3080/?dsh-desktop-platform=linux';
   private readonly PREF_NAME = 'dsh_desktop_settings';
   private readonly PREF_KEY_COLOR_MODE = 'colorMode';
+  private readonly PREF_KEY_WINDOW_RECT = 'windowRect';
   private readonly COLOR_MODE_SYSTEM = 'system';
   private readonly COLOR_MODE_LIGHT = 'light';
   private readonly COLOR_MODE_DARK = 'dark';
 
+  // Title-bar drag state.
+  private cachedWindow?: window.Window;
+  private dragStartX = 0;
+  private dragStartY = 0;
+  private winStartLeft = 0;
+  private winStartTop = 0;
+  private densityPixels = 1;
+
   aboutToAppear(): void {
     this.checkServer();
+    // Cache the window for title-bar dragging.
+    this.getMainWindow().then((win) => {
+      this.cachedWindow = win;
+    });
+    try {
+      this.densityPixels = display.getDefaultDisplaySync().densityPixels;
+    } catch (err) {
+      console.error('Failed to read display density:', err);
+    }
   }
 
   private checkServer(): void {
@@ -128,6 +146,76 @@ struct Index {
     } catch (err) {
       console.error('Failed to get main window:', err);
       return undefined;
+    }
+  }
+
+  private async isWindowMaximized(): Promise<boolean> {
+    const win = this.cachedWindow ?? await this.getMainWindow();
+    if (!win) return false;
+    try {
+      const props = win.getWindowProperties();
+      // When windowRect equals the full screen work area, treat as maximized.
+      // This is a heuristic; HarmonyOS does not expose a direct isMaximized API.
+      return false;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  private async toggleMaximize(): Promise<void> {
+    const win = this.cachedWindow ?? await this.getMainWindow();
+    if (!win) return;
+    try {
+      // HarmonyOS does not provide a direct maximize/restore API.
+      // We use full-screen as the closest equivalent, and restore to the saved rect.
+      const props = win.getWindowProperties();
+      const isFullScreen = props.windowRect.width >= display.getDefaultDisplaySync().width &&
+                           props.windowRect.height >= display.getDefaultDisplaySync().height;
+      if (isFullScreen) {
+        this.restoreWindowRect(win);
+      } else {
+        this.saveWindowRectForRestore(win);
+        win.setFullScreen(true).catch((err: Error) => {
+          console.error('Failed to set full screen:', err);
+        });
+      }
+    } catch (err) {
+      console.error('Failed to toggle maximize:', err);
+    }
+  }
+
+  private saveWindowRectForRestore(mainWindow: window.Window): void {
+    try {
+      const props = mainWindow.getWindowProperties();
+      const rect = props.windowRect;
+      const pref = preferences.getPreferencesSync(getContext(this), { name: this.PREF_NAME });
+      pref.putSync(this.PREF_KEY_WINDOW_RECT, JSON.stringify(rect));
+      pref.flushSync();
+    } catch (err) {
+      console.error('Failed to save window rect for restore:', err);
+    }
+  }
+
+  private restoreWindowRect(mainWindow: window.Window): void {
+    try {
+      const pref = preferences.getPreferencesSync(getContext(this), { name: this.PREF_NAME });
+      const saved = pref.getSync(this.PREF_KEY_WINDOW_RECT, '') as string;
+      if (!saved) {
+        mainWindow.setFullScreen(false).catch((err: Error) => {
+          console.error('Failed to exit full screen:', err);
+        });
+        return;
+      }
+      const rect: window.Rect = JSON.parse(saved);
+      mainWindow.setFullScreen(false).then(() => {
+        return mainWindow.moveWindowTo(Math.max(0, rect.left ?? 0), Math.max(0, rect.top ?? 0));
+      }).then(() => {
+        return mainWindow.resize(rect.width ?? 1440, rect.height ?? 920);
+      }).catch((err: Error) => {
+        console.error('Failed to restore window rect:', err);
+      });
+    } catch (err) {
+      console.error('Failed to read window rect preference:', err);
     }
   }
 
@@ -241,7 +329,9 @@ struct Index {
     });
   }
 
-  // Inject a simple right-click context menu for desktop-like operations.
+  // Inject a context-aware right-click menu for the web content.
+  // It offers copy/cut/paste/select-all when appropriate, and always keeps the
+  // app-level items (refresh, minimize, color mode, close).
   private injectContextMenu(): void {
     const script = `
       (function() {
@@ -255,6 +345,7 @@ struct Index {
             position: fixed;
             z-index: 999999;
             min-width: 140px;
+            max-width: 240px;
             background: var(--dsw-alias-bg-base, #fff);
             border: 1px solid var(--dsw-alias-border-l2, #e0e0e0);
             border-radius: 8px;
@@ -272,33 +363,47 @@ struct Index {
           .dsh-ctx-menu-item:hover {
             background: var(--dsw-alias-interactive-bg-hover, #f5f5f5);
           }
+          .dsh-ctx-menu-separator {
+            height: 1px;
+            margin: 4px 8px;
+            background: var(--dsw-alias-border-l2, #e0e0e0);
+          }
+          .dsh-ctx-menu-disabled {
+            opacity: 0.4;
+            pointer-events: none;
+          }
         \`;
         document.head.appendChild(style);
 
         let menu = null;
-        function showMenu(x, y) {
+        function showMenu(x, y, items) {
           if (menu) menu.remove();
           menu = document.createElement('div');
           menu.className = 'dsh-ctx-menu';
           menu.style.left = x + 'px';
           menu.style.top = y + 'px';
 
-          const items = [
-            { label: '刷新', action: () => location.reload() },
-            { label: '最小化', action: () => window.dshNative && window.dshNative.hide() },
-            { label: '切换深浅色', action: () => window.dshNative && window.dshNative.toggleColorMode() },
-            { label: '关闭', action: () => window.dshNative && window.dshNative.close() }
-          ];
-
+          let lastWasSeparator = false;
           items.forEach(item => {
+            if (item.separator) {
+              if (!lastWasSeparator) {
+                const sep = document.createElement('div');
+                sep.className = 'dsh-ctx-menu-separator';
+                menu.appendChild(sep);
+                lastWasSeparator = true;
+              }
+              return;
+            }
+            lastWasSeparator = false;
             const div = document.createElement('div');
-            div.className = 'dsh-ctx-menu-item';
+            div.className = 'dsh-ctx-menu-item' + (item.disabled ? ' dsh-ctx-menu-disabled' : '');
             div.textContent = item.label;
-            div.addEventListener('click', () => {
-              item.action();
-              menu.remove();
-              menu = null;
-            });
+            if (!item.disabled) {
+              div.addEventListener('click', () => {
+                item.action();
+                hideMenu();
+              });
+            }
             menu.appendChild(div);
           });
 
@@ -312,14 +417,52 @@ struct Index {
           }
         }
 
+        function getSelectedText() {
+          const sel = window.getSelection();
+          return sel ? sel.toString().trim() : '';
+        }
+
+        function isEditable(el) {
+          if (!el) return false;
+          return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
+        }
+
         document.addEventListener('contextmenu', (e) => {
-          // Do not override context menus inside text/code inputs or links.
           const target = e.target;
-          if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'A' || target.closest('a'))) {
-            return;
+          const link = target && (target.closest ? target.closest('a[href]') : null);
+          const selected = getSelectedText();
+          const editable = isEditable(target);
+
+          const items = [];
+
+          // Link-specific item
+          if (link) {
+            items.push({ label: '打开链接', action: () => { window.open(link.href, '_blank'); } });
+            items.push({ label: '复制链接地址', action: () => { navigator.clipboard.writeText(link.href); } });
+            items.push({ separator: true });
           }
+
+          // Editable inputs: cut / copy / paste / select all
+          if (editable) {
+            items.push({ label: '剪切', action: () => document.execCommand('cut') });
+            items.push({ label: '复制', action: () => document.execCommand('copy') });
+            items.push({ label: '粘贴', action: () => document.execCommand('paste') });
+            items.push({ label: '全选', action: () => document.execCommand('selectAll') });
+            items.push({ separator: true });
+          } else if (selected) {
+            // Non-editable with selection: offer copy
+            items.push({ label: '复制', action: () => document.execCommand('copy') });
+            items.push({ separator: true });
+          }
+
+          // App-level items
+          items.push({ label: '刷新', action: () => location.reload() });
+          items.push({ label: '最小化', action: () => window.dshNative && window.dshNative.hide() });
+          items.push({ label: '切换深浅色', action: () => window.dshNative && window.dshNative.toggleColorMode() });
+          items.push({ label: '关闭', action: () => window.dshNative && window.dshNative.close() });
+
           e.preventDefault();
-          showMenu(e.clientX, e.clientY);
+          showMenu(e.clientX, e.clientY, items);
         });
 
         document.addEventListener('click', (e) => {
@@ -332,6 +475,70 @@ struct Index {
       console.error('Failed to inject context menu:', err);
     });
   }
+
+  // System-level context menu shown when right-clicking the custom title bar.
+  @Builder
+  TitleBarContextMenu() {
+    Menu() {
+      MenuItem({ content: '刷新' })
+        .onClick(() => {
+          this.webController.refresh();
+        })
+      MenuItem({ content: '最小化' })
+        .onClick(() => {
+          this.nativeBridge.hide();
+        })
+      MenuItem({ content: '最大化 / 还原' })
+        .onClick(() => {
+          this.toggleMaximize();
+        })
+      MenuItem({ content: '切换深浅色' })
+        .onClick(() => {
+          this.toggleColorMode();
+        })
+      MenuItem({ content: '关闭' })
+        .onClick(() => {
+          this.nativeBridge.close();
+        })
+    }
+  }
+
+  // Invisible top drag hot zone. The system window controls (close/minimize/maximize)
+  // live in the top-right corner, so the right 200vp is left non-draggable. The rest
+  // of the strip can be dragged to move the window, double-clicked to maximize/restore,
+  // and right-clicked for the system context menu.
+  @Builder
+  InvisibleDragZone() {
+    Row()
+      .width('100%')
+      .height(40)
+      .padding({ left: 16, right: 200 })
+      .backgroundColor('rgba(0,0,0,0)')
+      .bindContextMenu(this.TitleBarContextMenu(), ResponseType.RightClick)
+      .onTouch((event: TouchEvent) => {
+        const win = this.cachedWindow;
+        if (!win || event.touches.length === 0) return;
+        if (event.type === TouchType.Down) {
+          const p = win.getWindowProperties();
+          this.winStartLeft = p.windowRect.left;
+          this.winStartTop = p.windowRect.top;
+          this.dragStartX = event.touches[0].x;
+          this.dragStartY = event.touches[0].y;
+        } else if (event.type === TouchType.Move) {
+          const dx = (event.touches[0].x - this.dragStartX) * this.densityPixels;
+          const dy = (event.touches[0].y - this.dragStartY) * this.densityPixels;
+          win.moveWindowTo(this.winStartLeft + Math.round(dx), this.winStartTop + Math.round(dy));
+        }
+      })
+      .onClick((event: ClickEvent) => {
+        if (event.timestamp - this.lastClickTime < 300) {
+          this.toggleMaximize();
+        }
+        this.lastClickTime = event.timestamp;
+      })
+  }
+
+  private lastClickTime = 0;
 
   @Builder
   LoadingBuilder() {
@@ -381,38 +588,35 @@ struct Index {
 
   @Builder
   WebBuilder() {
-    Column() {
-      // The Electron shell appends `dsh-desktop-platform=<process.platform>` so the
-      // web app applies its desktop presentation marker. OpenHarmony reports
-      // process.platform === 'openharmony', which the web app does not recognize yet;
-      // we use the closest Linux profile so the desktop chrome/tray hints render.
-      Web({ src: this.DSH_WEB_URL, controller: this.webController })
-        .width('100%')
-        .height('100%')
-        .javaScriptAccess(true)
-        .domStorageAccess(true)
-        .onlineImageAccess(true)
-        .mixedMode(MixedMode.All)
-        .darkMode(this.getWebDarkMode())
-        .zoomAccess(true)
-        .javaScriptProxy({
-          object: this.nativeBridge,
-          name: 'dshNative',
-          methodList: [],
-          asyncMethodList: ['minimize', 'hide', 'close', 'zoomIn', 'zoomOut', 'resetZoom', 'toggleColorMode'],
-          controller: this.webController
-        })
-        .onPageEnd((event) => {
-          this.hideSessionLogButton();
-          this.injectKeyboardShortcuts();
-          this.injectContextMenu();
-        })
-    }
-    .width('100%')
-    .height('100%')
+    // The Electron shell appends `dsh-desktop-platform=<process.platform>` so the
+    // web app applies its desktop presentation marker. OpenHarmony reports
+    // process.platform === 'openharmony', which the web app does not recognize yet;
+    // we use the closest Linux profile so the desktop chrome/tray hints render.
+    Web({ src: this.DSH_WEB_URL, controller: this.webController })
+      .width('100%')
+      .height('100%')
+      .javaScriptAccess(true)
+      .domStorageAccess(true)
+      .onlineImageAccess(true)
+      .mixedMode(MixedMode.All)
+      .darkMode(this.getWebDarkMode())
+      .zoomAccess(true)
+      .javaScriptProxy({
+        object: this.nativeBridge,
+        name: 'dshNative',
+        methodList: [],
+        asyncMethodList: ['minimize', 'hide', 'close', 'zoomIn', 'zoomOut', 'resetZoom', 'toggleColorMode'],
+        controller: this.webController
+      })
+      .onPageEnd((event) => {
+        this.hideSessionLogButton();
+        this.injectKeyboardShortcuts();
+        this.injectContextMenu();
+      })
   }
 
-  build() {
+  @Builder
+  Content() {
     if (this.isChecking) {
       this.LoadingBuilder()
     } else if (!this.isServerReady) {
@@ -420,5 +624,14 @@ struct Index {
     } else {
       this.WebBuilder()
     }
+  }
+
+  build() {
+    Stack({ alignContent: Alignment.Top }) {
+      this.Content()
+      this.InvisibleDragZone()
+    }
+    .width('100%')
+    .height('100%')
   }
 }
