@@ -74,6 +74,39 @@ HAP 是纯 Web 客户端；Host（`dsh web`）跑在系统侧，与 Electron 版
 ./launch.sh   # 启动 dsh web + hdc 端口转发 + 安装 + 启动应用
 ```
 
+## 与 dsh web 的连接与认证（token）
+
+dsh web 每次启动会生成一个随机的进程 token；浏览器需带 `?token=…` 访问一次，
+由 dsh web 签发一个绑定 `127.0.0.1:3080` 的持久签名 cookie，之后 30 天内免 token。
+本应用是 WebView（沙箱内不能跑 shell 去解析 dsh web 打印的 token），因此支持两种接入方式：
+
+**方式一（推荐）：给 dsh web 打「本地回环免认证」补丁**
+
+补丁文件：`scripts/dsh-client-connection-loopback.patch`（本仓库随附）
+
+```sh
+cd "$(npm root -g)/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-connection"
+git apply ~/path/to/scripts/dsh-client-connection-loopback.patch   # 或手工按文件注释加
+```
+
+补丁让 loopback（`127.0.0.1`）来源的**首页与 `/api` 请求都免 token/cookie**——
+本应用裸连 `http://127.0.0.1:3080/?dsh-desktop-platform=linux` 即可直接进入，
+目录选择 / 权限 / 会话全部可用，且与浏览器 GUI 共用同一实例、内容全同步。
+> 注意：升级或重装 dsh 后需重打此补丁。
+
+**方式二（免补丁）：启动时传入 token，首次握手种 cookie**
+
+本应用 `EntryAbility` 会读取启动参数 `dsh_token`；`Index.ets` 拿到后首次加载带
+`?token=…` 完成一次性认证（自动换持久 cookie），之后免 token。启动辅助见
+`launch-local.sh`（解析 dsh web 输出中的 token 并 `aa start` 传入），也可手动：
+
+```sh
+aa start -b com.example.dshdesktop -a EntryAbility --es dsh_token <从 dsh web 输出复制的 token>
+```
+
+> 无论哪种方式，都建议让 dsh web 以**单一实例**占用 `3080`，浏览器 GUI 与应用共用，
+> 会话 / 工作区 / 权限实时一致。
+
 ## 已知限制
 
 - OpenHarmony 用户应用无法自动拉起系统侧的 `dsh web`（沙箱限制），需手动 / 由系统脚本启动。

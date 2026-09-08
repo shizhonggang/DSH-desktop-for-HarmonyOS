@@ -1,0 +1,16 @@
+--- a/node_modules/@deepseek-ai/dsh-client-connection/lib/index.js
++++ b/node_modules/@deepseek-ai/dsh-client-connection/lib/index.js
+@@ -authorizeIndex 末尾分支
+ 		if (this.isAuthenticated(req)) return true;
++		// HarmonyOS local-shell app (and any loopback client): loopback traffic
++		// stays on this machine, so no token/cookie handshake is required for
++		// localhost use — otherwise a WebView shell pointed at 127.0.0.1 gets a
++		// hard 401 because it cannot run a shell to parse the launch token.
++		const _authority = requestAuthority(req.headers);
++		if (_authority !== void 0) {
++			const _host = new URL(`http://${_authority}`).hostname;
++			if (isLoopbackHostname(_host)) return true;
++		}
+ 		this.writeUnauthorized(req, res);
+ 		return false;
+ 
