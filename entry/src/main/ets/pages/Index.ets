@@ -38,6 +38,9 @@ struct Index {
   @State isServerReady: boolean = false;
   @State isChecking: boolean = true;
   @StorageLink('dshColorMode') colorMode: string = 'system';
+  // dsh web launch token, passed from the launcher via EntryAbility
+  // (`want.parameters.dsh_token`). Used once to obtain the auth cookie.
+  @StorageLink('dshToken') dshToken: string = '';
 
   private readonly DSH_WEB_URL = 'http://127.0.0.1:3080/?dsh-desktop-platform=linux';
   private readonly PREF_NAME = 'dsh_desktop_settings';
@@ -46,6 +49,19 @@ struct Index {
   private readonly COLOR_MODE_SYSTEM = 'system';
   private readonly COLOR_MODE_LIGHT = 'light';
   private readonly COLOR_MODE_DARK = 'dark';
+
+  // If the launcher gave us this run's dsh web token, append it so the first
+  // load performs the one-time auth handshake (dsh web replies 303 with an auth
+  // cookie for this origin). After that, token-free loads work via the cookie.
+  private resolvedWebUrl(): string {
+    const t = this.dshToken.trim();
+    if (t.length === 0) {
+      return this.DSH_WEB_URL;
+    }
+    // dsh web launch tokens are base64url (A-Za-z0-9_-), safe to append raw.
+    const sep = this.DSH_WEB_URL.includes('?') ? '&' : '?';
+    return this.DSH_WEB_URL + sep + 'token=' + t;
+  }
 
   // Title-bar drag state.
   private cachedWindow?: window.Window;
@@ -73,7 +89,7 @@ struct Index {
     this.isServerReady = false;
     const httpRequest = http.createHttp();
     httpRequest.request(
-      this.DSH_WEB_URL,
+      this.resolvedWebUrl(),
       {
         method: http.RequestMethod.GET,
         connectTimeout: 2000,
@@ -592,7 +608,7 @@ struct Index {
     // web app applies its desktop presentation marker. OpenHarmony reports
     // process.platform === 'openharmony', which the web app does not recognize yet;
     // we use the closest Linux profile so the desktop chrome/tray hints render.
-    Web({ src: this.DSH_WEB_URL, controller: this.webController })
+    Web({ src: this.resolvedWebUrl(), controller: this.webController })
       .width('100%')
       .height('100%')
       .javaScriptAccess(true)

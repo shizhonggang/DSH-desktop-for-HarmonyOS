@@ -44,6 +44,18 @@ export default class EntryAbility extends UIAbility {
     const colorMode = this.loadColorMode();
     this.applyColorMode(colorMode);
     AppStorage.setOrCreate<string>('dshColorMode', colorMode);
+    // dsh web launches with a random per-process token; the WebView must visit
+    // `/?token=…` once so dsh web sets an auth cookie (its signing secret is
+    // persisted), after which token-free loads work for the cookie lifetime.
+    // The launch helper (launch-local.sh) parses the token from `dsh web` stdout
+    // and passes it here as `dsh_token`.
+    let token = '';
+    const params: Record<string, Object> = want.parameters ?? {};
+    const raw = params['dsh_token'];
+    if (typeof raw === 'string' && raw.trim().length > 0) {
+      token = raw.trim();
+      AppStorage.setOrCreate<string>('dshToken', token);
+    }
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
   }
 
