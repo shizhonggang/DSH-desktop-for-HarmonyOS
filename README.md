@@ -13,11 +13,11 @@ HarmonyOS / OpenHarmony 2in1（PC）设备的客户端。图标使用 DSH 黑鲸
 │ HarmonyOS HAP (本仓库)                        │
 │  ArkUI 窗口 + Web 组件                        │
 │   ├─ 窗口装饰隐藏 / 深浅色 / 窗口状态持久化      │
-│   ├─ JS Bridge (dshNative): 最小化/关闭/缩放/主题 │
+│   ├─ JS Bridge (dshNative): 最小化/关闭/缩放/主题/最大化/侧边栏状态 │
 │   ├─ 快捷键 / 右键菜单 / session-log 按钮隐藏     │
 │   └─ dsh web 未启动时的错误页                   │
 └──────────────┬───────────────────────────────┘
-               │ http://127.0.0.1:3080/?dsh-desktop-platform=linux
+               │ http://127.0.0.1:3080/?dsh-desktop-platform=darwin
 ┌──────────────▼───────────────────────────────┐
 │ 系统侧 `dsh web`（Host，需单独启动）            │
 └──────────────────────────────────────────────┘
@@ -27,7 +27,9 @@ HAP 是纯 Web 客户端；Host（`dsh web`）跑在系统侧，与 Electron 版
 
 ## 功能
 
-- 无标题栏（`setWindowDecorVisible(false)`），窗口管理按钮仍在系统右上角
+- 无标题栏（`setWindowDecorVisible(false)` + `setWindowTitleButtonVisible(false,false,false)`），左上角自绘 macOS 风格红/黄/绿窗口控制按钮
+- hover 时显示 `×` / `−` / 绿色系统 SymbolGlyph；左侧侧边栏收起时按钮同步隐藏
+- 顶部拖拽热区高度 28vp，右侧排除 220vp；双击热区使用 `window.maximize()` / `window.recover()` 最大化/还原
 - 隐藏 dsh web 的 session-log 按钮，避免与系统窗口按钮重叠
 - 跟随系统深浅色，支持手动循环切换并持久化
 - 窗口大小 / 位置持久化（`preferences`）
@@ -90,7 +92,7 @@ git apply ~/path/to/scripts/dsh-client-connection-loopback.patch   # 或手工�
 ```
 
 补丁让 loopback（`127.0.0.1`）来源的**首页与 `/api` 请求都免 token/cookie**——
-本应用裸连 `http://127.0.0.1:3080/?dsh-desktop-platform=linux` 即可直接进入，
+本应用裸连 `http://127.0.0.1:3080/?dsh-desktop-platform=darwin` 即可直接进入，
 目录选择 / 权限 / 会话全部可用，且与浏览器 GUI 共用同一实例、内容全同步。
 > 注意：升级或重装 dsh 后需重打此补丁。
 
@@ -110,7 +112,8 @@ aa start -b com.example.dshdesktop -a EntryAbility --es dsh_token <从 dsh web �
 ## 已知限制
 
 - OpenHarmony 用户应用无法自动拉起系统侧的 `dsh web`（沙箱限制），需手动 / 由系统脚本启动。
-- 系统窗口按钮（关闭/最小化/最大化）在部分设备上无法隐藏，应用以隐藏 session-log 按钮避让。
+- 自绘窗口控件依赖 WebView JS 注入与 DSH DOM 结构；DSH Web 升级后侧边栏折叠检测可能需要适配。
+- HarmonyOS 部分设备/版本可能仍显示原生标题按钮；此时左上角自绘按钮仍可使用，但会出现两套按钮。
 - 文件拖拽依赖目标设备 WebView 对 HTML5 `drop` 事件的支持，应用侧已开启窗口接收拖拽事件。
 - 插件生态：纯前端插件可用；依赖 Electron/Node 主进程 API 的插件需额外适配。
 

@@ -182,25 +182,21 @@ struct Index {
     }
   }
 
+  private isMaximizedWindow: boolean = false;
+
   private async toggleMaximizeWindow(): Promise<void> {
     const win = this.cachedWindow ?? await this.getMainWindow();
     if (!win) return;
     try {
-      // HarmonyOS does not provide a direct maximize/restore API.
-      // We use full-screen as the closest equivalent, and restore to the saved rect.
-      const props = win.getWindowProperties();
-      const isFullScreen = props.windowRect.width >= display.getDefaultDisplaySync().width &&
-                           props.windowRect.height >= display.getDefaultDisplaySync().height;
-      if (isFullScreen) {
-        this.restoreWindowRect(win);
+      if (this.isMaximizedWindow) {
+        await win.recover();
+        this.isMaximizedWindow = false;
       } else {
-        this.saveWindowRectForRestore(win);
-        win.setFullScreen(true).catch((err: Error) => {
-          console.error('Failed to set full screen:', err);
-        });
+        await win.maximize();
+        this.isMaximizedWindow = true;
       }
     } catch (err) {
-      console.error('Failed to toggle maximize:', err);
+      console.error('Failed to toggle maximize/recover:', err);
     }
   }
 
@@ -567,9 +563,11 @@ struct Index {
   @Builder
   InvisibleDragZone() {
     Row()
-      .width('100%')
-      .height(40)
-      .padding({ left: 16, right: 200 })
+      // Keep the drag strip short and exclude the right-side DSH icons so
+      // they stay clickable; only the left/center empty title area drags.
+      .width('calc(100% - 220vp)')
+      .height(28)
+      .padding({ left: 16 })
       .backgroundColor('rgba(0,0,0,0)')
       .bindContextMenu(this.TitleBarContextMenu(), ResponseType.RightClick)
       .onTouch((event: TouchEvent) => {
@@ -587,15 +585,13 @@ struct Index {
           win.moveWindowTo(this.winStartLeft + Math.round(dx), this.winStartTop + Math.round(dy));
         }
       })
-      .onClick((event: ClickEvent) => {
-        if (event.timestamp - this.lastClickTime < 300) {
-          this.toggleMaximizeWindow();
-        }
-        this.lastClickTime = event.timestamp;
-      })
+      .gesture(
+        TapGesture({ count: 2 })
+          .onAction(() => {
+            this.toggleMaximizeWindow();
+          })
+      )
   }
-
-  private lastClickTime = 0;
 
   @Builder
   LoadingBuilder() {
