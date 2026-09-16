@@ -28,6 +28,8 @@ interface DshNativeBridge {
   zoomOut: () => Promise<void>;
   resetZoom: () => Promise<void>;
   toggleColorMode: () => Promise<void>;
+  toggleMaximize: () => Promise<void>;
+  setSidebarCollapsed: (collapsed: boolean) => void;
 }
 
 @Entry
@@ -37,12 +39,14 @@ struct Index {
 
   @State isServerReady: boolean = false;
   @State isChecking: boolean = true;
+  @State isSidebarCollapsed: boolean = false;
+  @State isHoverControls: boolean = false;
   @StorageLink('dshColorMode') colorMode: string = 'system';
   // dsh web launch token, passed from the launcher via EntryAbility
   // (`want.parameters.dsh_token`). Used once to obtain the auth cookie.
   @StorageLink('dshToken') dshToken: string = '';
 
-  private readonly DSH_WEB_URL = 'http://127.0.0.1:3080/?dsh-desktop-platform=linux';
+  private readonly DSH_WEB_URL = 'http://127.0.0.1:3080/?dsh-desktop-platform=darwin';
   private readonly PREF_NAME = 'dsh_desktop_settings';
   private readonly PREF_KEY_COLOR_MODE = 'colorMode';
   private readonly PREF_KEY_WINDOW_RECT = 'windowRect';
@@ -178,7 +182,7 @@ struct Index {
     }
   }
 
-  private async toggleMaximize(): Promise<void> {
+  private async toggleMaximizeWindow(): Promise<void> {
     const win = this.cachedWindow ?? await this.getMainWindow();
     if (!win) return;
     try {
@@ -281,6 +285,12 @@ struct Index {
         console.error('Failed to reset zoom:', err);
       }
     },
+    toggleMaximize: async (): Promise<void> => {
+      await this.toggleMaximizeWindow();
+    },
+    setSidebarCollapsed: (collapsed: boolean): void => {
+      this.isSidebarCollapsed = collapsed;
+    },
     toggleColorMode: async (): Promise<void> => {
       this.toggleColorMode();
     }
@@ -302,6 +312,37 @@ struct Index {
       })();
     `).catch((err: Error) => {
       console.error('Failed to hide session log button:', err);
+    });
+  }
+
+  // Observe the DSH sidebar collapsed state and bridge it to ArkUI so the
+  // macOS-style window controls can collapse together with the sidebar.
+  private injectSidebarCollapseObserver(): void {
+    const script = `
+      (function() {
+        if (window.__dshSidebarCollapseObserver) return;
+        window.__dshSidebarCollapseObserver = true;
+        let last = null;
+        function isCollapsed() {
+          if (document.querySelector('[data-sidebar-collapsed]')) return true;
+          const roots = document.querySelectorAll('[class*="_root"][class*="_collapsed"]');
+          return roots.length > 0;
+        }
+        function report() {
+          const collapsed = isCollapsed();
+          if (collapsed !== last) {
+            last = collapsed;
+            if (window.dshNative && window.dshNative.setSidebarCollapsed) {
+              window.dshNative.setSidebarCollapsed(collapsed);
+            }
+          }
+        }
+        report();
+        setInterval(report, 400);
+      })();
+    `;
+    this.webController.runJavaScript(script).catch((err: Error) => {
+      console.error('Failed to inject sidebar collapse observer:', err);
     });
   }
 
@@ -506,7 +547,7 @@ struct Index {
         })
       MenuItem({ content: '最大化 / 还原' })
         .onClick(() => {
-          this.toggleMaximize();
+          this.toggleMaximizeWindow();
         })
       MenuItem({ content: '切换深浅色' })
         .onClick(() => {
@@ -548,7 +589,7 @@ struct Index {
       })
       .onClick((event: ClickEvent) => {
         if (event.timestamp - this.lastClickTime < 300) {
-          this.toggleMaximize();
+          this.toggleMaximizeWindow();
         }
         this.lastClickTime = event.timestamp;
       })
@@ -620,17 +661,57 @@ struct Index {
       .javaScriptProxy({
         object: this.nativeBridge,
         name: 'dshNative',
-        methodList: [],
-        asyncMethodList: ['minimize', 'hide', 'close', 'zoomIn', 'zoomOut', 'resetZoom', 'toggleColorMode'],
+        methodList: ['setSidebarCollapsed'],
+        asyncMethodList: ['minimize', 'hide', 'close', 'zoomIn', 'zoomOut', 'resetZoom', 'toggleColorMode', 'toggleMaximize'],
         controller: this.webController
       })
       .onPageEnd((event) => {
         this.hideSessionLogButton();
+        this.injectSidebarCollapseObserver();
         this.injectKeyboardShortcuts();
         this.injectContextMenu();
       })
   }
 
+  @Builder
+  WindowControls() {
+    Row({ space: 8 }) {
+      Button(this.isHoverControls ? '×' : '', { type: ButtonType.Circle })
+        .width(16)
+        .height(16)
+        .padding(0)
+        .fontSize(14)
+        .fontColor('#3a0000')
+        .backgroundColor('#ff5f57')
+        .border({ width: 0.5, color: 'rgba(0,0,0,0.18)' })
+        .onClick(() => { this.nativeBridge.close(); })
+      Button(this.isHoverControls ? '−' : '', { type: ButtonType.Circle })
+        .width(16)
+        .height(16)
+        .padding(0)
+        .fontSize(14)
+        .fontColor('#3a2a00')
+        .backgroundColor('#febc2e')
+        .border({ width: 0.5, color: 'rgba(0,0,0,0.18)' })
+        .onClick(() => { this.nativeBridge.hide(); })
+      Button({ type: ButtonType.Circle }) {
+        if (this.isHoverControls) {
+          SymbolGlyph($r('sys.symbol.arrow_up_left_and_arrow_down_right'))
+            .fontSize(11)
+            .fontColor(['#063a06'])
+        }
+      }
+      .width(16)
+      .height(16)
+      .padding(0)
+      .backgroundColor('#28c840')
+      .border({ width: 0.5, color: 'rgba(0,0,0,0.18)' })
+      .onClick(() => { this.nativeBridge.toggleMaximize(); })
+    }
+    .onHover((isHover: boolean) => { this.isHoverControls = isHover; })
+    .position({ x: 12, y: 12 })
+    .visibility(this.isSidebarCollapsed ? Visibility.None : Visibility.Visible)
+  }
   @Builder
   Content() {
     if (this.isChecking) {
@@ -646,6 +727,7 @@ struct Index {
     Stack({ alignContent: Alignment.Top }) {
       this.Content()
       this.InvisibleDragZone()
+      this.WindowControls()
     }
     .width('100%')
     .height('100%')

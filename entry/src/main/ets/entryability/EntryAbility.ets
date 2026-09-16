@@ -116,6 +116,14 @@ export default class EntryAbility extends UIAbility {
         hilog.error(DOMAIN, 'testTag', 'Failed to hide title bar. Cause: %{public}s', JSON.stringify(err));
       }
 
+      // Hide native title-bar buttons; the app draws its own macOS-style
+      // traffic lights in the top-left corner.
+      try {
+        mainWindow.setWindowTitleButtonVisible(false, false, false);
+      } catch (err) {
+        hilog.error(DOMAIN, 'testTag', 'Failed to hide title buttons. Cause: %{public}s', JSON.stringify(err));
+      }
+
       try {
         const limits: window.WindowLimits = {
           minWidth: MIN_WINDOW_WIDTH_PX,
