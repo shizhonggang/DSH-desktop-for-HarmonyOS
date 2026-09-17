@@ -1,5 +1,7 @@
 # DSH-desktop-for-HarmonyOS
 
+![DSH for HarmonyOS 预览](assets/dsh_preview.jpg)
+
 [DeepSeek Harness](https://github.com/anywhere-labs/deepseek-harness-desktop) 桌面端移植到
 HarmonyOS / OpenHarmony 2in1（PC）设备的客户端。图标使用 DSH 黑鲸默认图标。
 
