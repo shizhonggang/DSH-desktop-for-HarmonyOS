@@ -78,7 +78,10 @@ function parseTasksLarge(raw: string): TaskItem[] {
 @Entry
 @Component
 struct DshCardLarge {
-  @LocalStorageProp('tasks') tasksJson: string = '[]';
+  // @Watch on tasksJson: ArkUI form widgets do not track dependencies read
+  // inside a getter, so ForEach(this.parsedTasks) would never rebuild.
+  // Re-parse into @State whenever the binding data changes instead.
+  @LocalStorageProp('tasks') @Watch('onTasksChanged') tasksJson: string = '[]';
   @LocalStorageProp('runningCount') runningCount: number = 0;
   @LocalStorageProp('rounds') rounds: number = 0;
   @LocalStorageProp('steps') steps: number = 0;
@@ -88,11 +91,14 @@ struct DshCardLarge {
   @LocalStorageProp('progress') progress: number = 0;
   @LocalStorageProp('updatedAt') updatedAt: string = '';
 
-  private tasks: TaskItem[] = [];
+  @State tasks: TaskItem[] = [];
 
-  /** Re-parse whenever tasksJson changes (called from build). */
-  private get parsedTasks(): TaskItem[] {
-    return parseTasksLarge(this.tasksJson);
+  aboutToAppear(): void {
+    this.tasks = parseTasksLarge(this.tasksJson);
+  }
+
+  onTasksChanged(): void {
+    this.tasks = parseTasksLarge(this.tasksJson);
   }
 
   @Builder
@@ -221,7 +227,7 @@ struct DshCardLarge {
 
       // Task list (scrollable if too many)
       List({ space: 0 }) {
-        ForEach(this.parsedTasks, (task: TaskItem) => {
+        ForEach(this.tasks, (task: TaskItem) => {
           ListItem() {
             this.TaskRow(task)
           }

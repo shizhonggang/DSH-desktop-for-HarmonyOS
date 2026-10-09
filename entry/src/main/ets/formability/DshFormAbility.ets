@@ -37,11 +37,20 @@ export default class DshFormAbility extends FormExtensionAbility {
     hilog.info(DOMAIN, TAG, 'onAddForm called');
     // Default card data — will be overwritten by the first updateCardData call.
     const data = new Map<string, Object>();
+    // Single-task fields (mini/wide cards)
     data.set('taskStatus', 'idle');
     data.set('taskTitle', 'DSH');
     data.set('taskDetail', 'No active task');
     data.set('updatedAt', '');
     data.set('runningCount', 0);
+    // Multi-task fields (large card)
+    data.set('tasks', '[]');
+    data.set('rounds', 0);
+    data.set('steps', 0);
+    data.set('tokRate', '');
+    data.set('tokTotal', '');
+    data.set('cacheRate', '');
+    data.set('progress', 0);
     return formBindingData.createFormBindingData(data);
   }
 
