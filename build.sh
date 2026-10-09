@@ -19,6 +19,9 @@ if [ "$MODE" != "release" ] && [ "$MODE" != "debug" ]; then
 fi
 
 cd "$(dirname "$0")"
+# 构建前闸门：确认基线未落后远端（2026-10-09 事故防线，见脚本头部）
+"$(dirname "$0")/scripts/prebuild-check.sh" || exit 1
+
 node "${DEVECO_HOME}/Contents/tools/hvigor/bin/hvigorw.js" \
   --mode module \
   -p product=default \

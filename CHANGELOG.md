@@ -3,6 +3,45 @@
 本仓库所有值得记录的变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 新增
+
+- **DSH ↔ ArkTS 桥**：让 `dsh web`（node 侧）能调用只有 ArkTS 才有的系统能力，补齐
+  `aa` CLI 覆盖不到的四类调用：
+
+  | 能力 | `aa start` | 本桥 |
+  |---|---|---|
+  | 普通隐式 Want | ✅ | ✅ |
+  | `startAbilityByType`（导航/邮件/金融/航班/快递垂类面板） | ❌ 无对应开关 | ✅ |
+  | `startAbility` 带 `flags`（如文件读权限授权） | ❌ 无 `-f` | ✅ |
+  | `openLink` | ❌ | ✅ |
+  | 系统通知 `notify` / `dismissNotification` | ❌ 无任何通知开关 | ✅ |
+
+  - 新增 `entry/src/main/ets/bridge/BridgeAgent.ets`：ArkTS 侧 agent，长轮询 node 侧
+    回环端点并执行命令；按华为文档对 mail 面板的参数自动 `encodeURI`（navigation
+    保持明文），调用方一律传明文。
+  - `EntryAbility` 在 `onWindowStageCreate` 启动 / `onDestroy` 停止该 agent。
+  - 新增 `bridge/bridge-server.mjs`：node 侧对端（零依赖），提供
+    `/poll`、`/result`、`/command`、`/healthz` 与 `call` / `status` CLI。
+  - 新增 `bridge/start-bridge.sh`（后台起停）与 `bridge/smoke.mjs`（假 agent 协议自测，
+    8 项断言，无需先装 HAP）。
+  - 新增 `bridge/README.md`：架构、构建、用法示例、限制与下一阶段（无障碍扩展）说明。
+  - 通知：`notify` / `dismissNotification` 两个动作，支持基础文本与长文本两种样式、
+    复用 id 原地更新（进度类）、点击通知回到 DshDesktop 窗口；首次调用若未授权会由桥
+    自动触发系统授权框并把结果如实回传（`ensureNotificationsEnabled`）。
+  - 新增 `bridge/apps.json` + `launchApp` 动作：按别名/中文名拉起本机应用，走显式 Want
+    零弹窗；已实测 6 个（备忘录/日历/邮件/地图/查找设备/智慧生活）。
+  - 新增 `bridge/targets.json`：把 `startAbilityByType` 的业务类型映射到具体应用，命中即改写为
+    显式 Want → 不再弹系统垂类选择框；返回值新增 `via`（explicit/panel）与 `target` 字段；
+    新增 `GET /apps` 与 `GET /targets`。改动均在 node 侧，**不需要重新构建 HAP**。
+  - 修：`bridge/start-bridge.sh` 的 `stop` 原先用 `pkill -f bridge-server.mjs`，会误杀 cmdline 里
+    含该字符串的任意进程（含正在执行它的 shell）——改为仅按 pidfile 停止。
+  - 经验记录：华为系统应用的入口 ability 名不统一，`MainAbility` 与 `EntryAbility` 各占一半，
+    只能靠 `aa start -b <bundle> -a <候选>` 实测（返回 `start ability successfully.` 即命中）。
+  - 未新增任何权限，也未改动 `module.json5`：回环 HTTP 走已有的
+    `ohos.permission.INTERNET`。
+
 ## [1.2.0] - 2026-09-16
 
 ### 新增

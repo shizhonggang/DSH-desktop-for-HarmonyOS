@@ -1,0 +1,12 @@
+{
+  "_readme": "把 startAbilityByType 的业务类型映射到具体应用：命中后 node 侧会改写为显式 Want(bundleName+abilityName)，从而不再弹系统的垂类选择框(Intent Panel)。改这个文件不需要重新构建 HAP。键可以是 type（mail/navigation/...），也可以是 type:sceneType（如 navigation:2）更精确。passParams=false 表示不把 wantParam 透传到 parameters。",
+
+  "mail": {
+    "bundleName": "com.huawei.hmos.email",
+    "abilityName": "EntryAbility"
+  },
+  "navigation": {
+    "bundleName": "com.huawei.hmos.maps.app",
+    "abilityName": "EntryAbility"
+  }
+}

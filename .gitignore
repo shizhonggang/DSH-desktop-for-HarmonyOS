@@ -16,3 +16,7 @@
 
 # Logs
 *.log
+
+# bridge/ 运行时产物（日志与 pid，不提交）
+bridge/bridge.log
+bridge/bridge.pid

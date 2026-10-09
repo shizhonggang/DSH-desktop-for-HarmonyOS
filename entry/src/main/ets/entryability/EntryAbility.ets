@@ -19,8 +19,13 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { notificationManager } from '@kit.NotificationKit';
 import { preferences } from '@kit.ArkData';
+import { BridgeAgent } from '../bridge/BridgeAgent';
 
 const DOMAIN = 0x0000;
+// Loopback port served by the node side (bridge/bridge-server.mjs). The agent
+// long-polls it so dsh can reach ArkTS-only ability APIs (startAbilityByType /
+// startAbility with uri-permission flags). See bridge/README.md.
+const BRIDGE_PORT = 3131;
 // Align with the Electron shell: initial 1440x920 (see module.json5 metadata),
 // minimum 960x640. The previous 1920x1280 was larger than the window itself.
 const MIN_WINDOW_WIDTH_PX = 960;
@@ -40,6 +45,9 @@ const COLOR_MODE_DARK = 'dark';
 
 export default class EntryAbility extends UIAbility {
   private mainWindow?: window.Window;
+  // ArkTS -> dsh bridge (see bridge/BridgeAgent.ets). Runs for the lifetime of
+  // this Ability so dsh can call ArkTS-only ability APIs while the shell is up.
+  private bridge?: BridgeAgent;
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     const colorMode = this.loadColorMode();
     this.applyColorMode(colorMode);
@@ -87,10 +95,23 @@ export default class EntryAbility extends UIAbility {
 
   onDestroy(): void {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onDestroy');
+    if (this.bridge !== undefined) {
+      this.bridge.stop();
+      this.bridge = undefined;
+    }
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
+
+    // Start the ArkTS bridge before loading the page: dsh web may ask for
+    // ArkTS-only APIs (startAbilityByType etc.) as soon as the WebView is up.
+    try {
+      this.bridge = new BridgeAgent(this.context, BRIDGE_PORT);
+      this.bridge.start();
+    } catch (err) {
+      hilog.error(DOMAIN, 'testTag', 'Failed to start the dsh bridge. Cause: %{public}s', JSON.stringify(err));
+    }
 
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
