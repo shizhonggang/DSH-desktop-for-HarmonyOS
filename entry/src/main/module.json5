@@ -82,6 +82,21 @@
             "resource": "$profile:backup_config"
           }
         ],
+      },
+      {
+        // 无障碍服务：让 dsh 读取其他应用界面并点击控件。
+        // 需要用户在「设置 → 辅助功能」里手动开启。
+        // metadata.name 若被 DevEco 标红，用它的补全列表校正（备选：ohos.extension.accessibility）。
+        "name": "DshAccessibilityAbility",
+        "srcEntry": "./ets/accessibility/DshAccessibilityAbility.ets",
+        "type": "accessibility",
+        "exported": false,
+        "metadata": [
+          {
+            "name": "ohos.accessibleability",
+            "resource": "$profile:accessibility_config"
+          }
+        ]
       }
     ]
   }

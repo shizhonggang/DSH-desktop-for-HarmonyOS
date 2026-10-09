@@ -134,6 +134,44 @@ const health = await (await fetch(`${BASE}/healthz`)).json()
 check('healthz reports the agent as connected', health.agent?.connected === true, JSON.stringify(health.agent))
 check('queued work is not left behind', health.queueDepth === 0 && health.pendingCommands === 0, JSON.stringify(health))
 
+// ---- dual channel: the two pollers must not steal each other's work --------
+const a11ySeen = []
+let a11yStopped = false
+const a11yLoop = (async () => {
+  while (!a11yStopped) {
+    let response
+    try {
+      response = await fetch(`${BASE}/poll?wait=4000&channel=a11y`)
+    } catch {
+      break
+    }
+    if (response.status === 204 || !response.ok) {
+      continue
+    }
+    const command = await response.json()
+    a11ySeen.push(command)
+    await fetch(`${BASE}/result`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: command.id, ok: true, data: JSON.stringify({ pong: true, channel: 'a11y' }) })
+    })
+  }
+})()
+
+const uiPing = await call({ action: 'ping', args: {} })
+check('ui channel still answers plain ping', uiPing.ok === true && uiPing.data?.pong === true, JSON.stringify(uiPing))
+check('ui ping did not leak to the a11y poller', a11ySeen.length === 0, JSON.stringify(a11ySeen))
+
+const a11yPing = await call({ action: 'a11yPing', args: {} })
+check('a11y channel answers a11yPing', a11yPing.ok === true && a11yPing.data?.channel === 'a11y', JSON.stringify(a11yPing))
+check('a11yPing reached the a11y poller only', a11ySeen.length === 1 && a11ySeen[0].action === 'a11yPing', JSON.stringify(a11ySeen))
+
+const bothHealth = await (await fetch(`${BASE}/healthz`)).json()
+check('healthz reports both channels',
+  bothHealth.agent?.connected === true && bothHealth.a11y?.connected === true,
+  JSON.stringify({ ui: bothHealth.agent, a11y: bothHealth.a11y }))
+a11yStopped = true
+
 // ---- explicit target override (targets.json appears at runtime) -----------
 const args = { type: 'navigation', wantParam: { sceneType: 2, destinationName: '上海' } }
 const unmapped = await call({ action: 'startAbilityByType', args })

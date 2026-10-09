@@ -172,6 +172,42 @@ node bridge/bridge-server.mjs call '{"action":"ping"}'
 
 脚本里也可以直接打 HTTP：`POST http://127.0.0.1:3131/command`，返回 `{ok,data}` 或 `{ok:false,error}`。
 
+## 第二阶段：无障碍扩展（读界面 / 点控件）
+
+`uitest` / `snapshot_display` 对本应用域是 SELinux 死封，所以"读别人界面、点别人按钮"只能走系统正规通道：**无障碍扩展**（`AccessibilityExtensionAbility`）。
+
+> ⚠️ **前置条件**：必须在「设置 → 辅助功能 → 已安装的服务」里**手动开启 DshDesktop**。
+> 未开启时 `status` 会显示 `a11y.connected: false`，所有 `a11y*` 命令会超时（不是静默失败）。
+
+| 动作 | 作用 |
+|---|---|
+| `a11yPing` | 探活（确认扩展真的连上了） |
+| `a11yWindows` | 列出当前所有窗口（bundleName / 位置） |
+| `a11yFocus` | 读当前焦点元素（相当于"我现在在哪儿"） |
+| `a11yFind` | 按文本**全屏搜索**控件 |
+| `a11yClick` | 按文本找到控件并**点击** |
+| `a11yTap` | 按坐标点一下（控件没有文本时用） |
+| `a11ySwipe` | 滑动 / 滚动 |
+| `a11yLastEvent` | 最后一次无障碍事件（诊断"到底有没有收到事件"） |
+
+```sh
+node bridge/bridge-server.mjs status                      # a11y.connected 应为 true
+node bridge/bridge-server.mjs call '{"action":"a11yFocus"}'
+node bridge/bridge-server.mjs call '{"action":"a11yFind","args":{"match":"确定"}}'
+node bridge/bridge-server.mjs call '{"action":"a11yClick","args":{"match":"确定"}}'
+node bridge/bridge-server.mjs call '{"action":"a11yTap","args":{"x":800,"y":600}}'
+```
+
+**双通道设计**：UI 侧 agent 与无障碍扩展是两个独立轮询者，node 侧按动作名前缀分流（`a11y*` → 无障碍通道），互不抢命令；`healthz` 分别报告两条通道（`agent` / `a11y`）。
+
+**能力边界（诚实说明）**：
+- **能**：按文本全屏搜索控件、点击它、按坐标点按、滑动、读窗口列表与焦点元素
+- **不能**：**完整导出控件树** —— `AccessibilityElement` 没有公开的 `getChildren`，只有 `findElement('content' | 'focusType' | 'focusDirection')`，所以"读界面"是**按需搜索式**，不是整树快照
+
+**需要你在 DevEco 里核实的两处配置**（编辑器即时校验，不用构建）：
+1. `module.json5` 中 `metadata[].name` 是否为 `ohos.accessibleability`（备选 `ohos.extension.accessibility`）—— 在编辑器里触发补全即可确认（和你确认 `type: accessibility` 的方法一样）
+2. `resources/base/profile/accessibility_config.json` 的字段是否被接受（当前是最小写法：`accessibilityCapabilities` + `accessibilityCapabilityRationale`）
+
 ## 在线查包名（可选）
 
 没有官方"包名查询"接口。实测可用的是本机这个第三方看板（收录的是**上架 AppGallery** 的应用）：

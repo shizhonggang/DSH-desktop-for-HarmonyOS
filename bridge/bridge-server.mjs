@@ -58,15 +58,20 @@ const AGENT_STALE_MS = 20000
 const VERSION = '1.0.0'
 
 let seq = 0
-/** Commands waiting to be picked up by the agent. */
-const queue = []
-/** Commands already picked up; id -> {resolve, timer}. */
+/**
+ * Two independent channels, so the two ArkTS pollers never steal each other's
+ * work: `ui` = EntryAbility agent (launch / intents / notifications),
+ * `a11y` = accessibility extension (read the screen / click / gesture).
+ * Routed purely by action name: `a11y*` goes to the accessibility channel.
+ */
+const channels = {
+  ui: { queue: [], waiters: [], agent: { lastSeen: 0, polls: 0 } },
+  a11y: { queue: [], waiters: [], agent: { lastSeen: 0, polls: 0 } }
+}
+const channelFor = (action) => String(action ?? '').startsWith('a11y') ? 'a11y' : 'ui'
+/** Commands already picked up; id -> {resolve, timer, channel}. */
 const pending = new Map()
-/** Outstanding long-poll responses. */
-const waiters = []
-let agent = { lastSeen: 0, polls: 0 }
-
-const agentConnected = () => Date.now() - agent.lastSeen < AGENT_STALE_MS
+const agentConnected = (name = 'ui') => Date.now() - channels[name].agent.lastSeen < AGENT_STALE_MS
 
 function log (...parts) {
   process.stdout.write(`[${new Date().toISOString()}] ${parts.join(' ')}\n`)
@@ -97,27 +102,30 @@ function readBody (req, limit = 1024 * 1024) {
 }
 
 /** Hands queued work to whichever long-poll is waiting. */
-function flushWaiters () {
-  while (waiters.length > 0 && queue.length > 0) {
-    const waiter = waiters.shift()
+function flushWaiters (channel) {
+  const box = channels[channel]
+  while (box.waiters.length > 0 && box.queue.length > 0) {
+    const waiter = box.waiters.shift()
     clearTimeout(waiter.timer)
-    waiter.respond(queue.shift())
+    waiter.respond(box.queue.shift())
   }
 }
 
 /** Submits a command and resolves with the agent's result. */
 function enqueue (action, args) {
   const id = `c${++seq}-${Date.now().toString(36)}`
+  const channel = channelFor(action)
+  const box = channels[channel]
   const command = { id, action, args: args ?? {} }
-  queue.push(command)
-  log(`enqueue ${action} id=${id} queued=${queue.length} agent=${agentConnected() ? 'up' : 'down'}`)
-  flushWaiters()
+  box.queue.push(command)
+  log(`enqueue[${channel}] ${action} id=${id} queued=${box.queue.length} agent=${agentConnected(channel) ? 'up' : 'down'}`)
+  flushWaiters(channel)
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       pending.delete(id)
-      const i = queue.findIndex((c) => c.id === id)
+      const i = box.queue.findIndex((c) => c.id === id)
       if (i >= 0) {
-        queue.splice(i, 1)
+        box.queue.splice(i, 1)
       }
       resolve({
         ok: false,
@@ -128,7 +136,7 @@ function enqueue (action, args) {
         }
       })
     }, COMMAND_TIMEOUT_MS)
-    pending.set(id, { resolve, timer })
+    pending.set(id, { resolve, timer, channel })
   })
 }
 
@@ -228,21 +236,29 @@ function startServer () {
         version: VERSION,
         port: PORT,
         agent: {
-          connected: agentConnected(),
-          lastSeenMsAgo: agent.lastSeen === 0 ? null : Date.now() - agent.lastSeen,
-          polls: agent.polls
+          connected: agentConnected('ui'),
+          lastSeenMsAgo: channels.ui.agent.lastSeen === 0 ? null : Date.now() - channels.ui.agent.lastSeen,
+          polls: channels.ui.agent.polls
         },
-        queueDepth: queue.length,
+        a11y: {
+          connected: agentConnected('a11y'),
+          lastSeenMsAgo: channels.a11y.agent.lastSeen === 0 ? null : Date.now() - channels.a11y.agent.lastSeen,
+          polls: channels.a11y.agent.polls
+        },
+        queueDepth: channels.ui.queue.length,
+        a11yQueueDepth: channels.a11y.queue.length,
         pendingCommands: pending.size
       })
       return
     }
 
     if (req.method === 'GET' && url.pathname === '/poll') {
-      agent.lastSeen = Date.now()
-      agent.polls += 1
-      if (queue.length > 0) {
-        json(res, 200, queue.shift())
+      const channel = url.searchParams.get('channel') === 'a11y' ? 'a11y' : 'ui'
+      const box = channels[channel]
+      box.agent.lastSeen = Date.now()
+      box.agent.polls += 1
+      if (box.queue.length > 0) {
+        json(res, 200, box.queue.shift())
         return
       }
       const waitMs = Math.min(Math.max(Number(url.searchParams.get('wait') ?? POLL_HOLD_MS) || POLL_HOLD_MS, 1000), 60000)
@@ -250,19 +266,19 @@ function startServer () {
         respond: (command) => json(res, 200, command),
         timer: -1
       }
-      waiters.push(waiter)
+      box.waiters.push(waiter)
       waiter.timer = setTimeout(() => {
-        const i = waiters.indexOf(waiter)
+        const i = box.waiters.indexOf(waiter)
         if (i >= 0) {
-          waiters.splice(i, 1)
+          box.waiters.splice(i, 1)
         }
         res.writeHead(204)
         res.end()
       }, waitMs)
       req.on('close', () => {
-        const i = waiters.indexOf(waiter)
+        const i = box.waiters.indexOf(waiter)
         if (i >= 0) {
-          waiters.splice(i, 1)
+          box.waiters.splice(i, 1)
         }
         clearTimeout(waiter.timer)
       })
@@ -277,11 +293,13 @@ function startServer () {
         json(res, 400, { ok: false, error: { code: 'bad_request', message: String(error?.message ?? error) } })
         return
       }
-      agent.lastSeen = Date.now()
       const entry = pending.get(body.id)
       if (entry !== undefined) {
         clearTimeout(entry.timer)
         pending.delete(body.id)
+        if (entry.channel && channels[entry.channel]) {
+          channels[entry.channel].agent.lastSeen = Date.now()
+        }
         entry.resolve(normaliseResult(body))
       }
       json(res, 200, { ok: true })

@@ -39,7 +39,13 @@
     含该字符串的任意进程（含正在执行它的 shell）——改为仅按 pidfile 停止。
   - 经验记录：华为系统应用的入口 ability 名不统一，`MainAbility` 与 `EntryAbility` 各占一半，
     只能靠 `aa start -b <bundle> -a <候选>` 实测（返回 `start ability successfully.` 即命中）。
-  - 未新增任何权限，也未改动 `module.json5`：回环 HTTP 走已有的
+  - **第二阶段：无障碍扩展**（`entry/src/main/ets/accessibility/`）：`DshAccessibilityAbility`
+    + 独立的 `AccessibilityBridgeAgent`（轮询 `?channel=a11y`）。动作：`a11yWindows` /
+    `a11yFocus` / `a11yFind` / `a11yClick` / `a11yTap` / `a11ySwipe` / `a11yLastEvent`。
+    node 侧改为**双通道**（按动作名前缀 `a11y*` 分流），`healthz` 分别报告。
+    需要用户在「设置 → 辅助功能」手动开启；`module.json5` 新增 `type: "accessibility"`
+    扩展声明 + `resources/base/profile/accessibility_config.json`。
+  - 未新增任何权限：回环 HTTP 走已有的
     `ohos.permission.INTERNET`。
 
 ## [1.2.0] - 2026-09-16
