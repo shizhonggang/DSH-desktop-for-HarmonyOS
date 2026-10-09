@@ -15,6 +15,30 @@
     {
       "name": "permission_internet_reason",
       "value": "Access local DeepSeek Harness web service at 127.0.0.1:3080"
+    },
+    {
+      "name": "form_mini_display_name",
+      "value": "DSH Status"
+    },
+    {
+      "name": "form_mini_desc",
+      "value": "Compact DSH task status card"
+    },
+    {
+      "name": "form_wide_display_name",
+      "value": "DSH Tasks"
+    },
+    {
+      "name": "form_wide_desc",
+      "value": "Wide DSH task status card with details"
+    },
+    {
+      "name": "form_large_display_name",
+      "value": "DSH Dashboard"
+    },
+    {
+      "name": "form_large_desc",
+      "value": "Large DSH dashboard with task list and status bar"
     }
   ]
 }

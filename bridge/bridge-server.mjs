@@ -77,6 +77,21 @@ function log (...parts) {
   process.stdout.write(`[${new Date().toISOString()}] ${parts.join(' ')}\n`)
 }
 
+/** Simple event emitter for bridge events (cardRefresh, etc.). */
+const eventListeners = new Map()
+function onBridgeEvent(event, listener) {
+  if (!eventListeners.has(event)) eventListeners.set(event, [])
+  eventListeners.get(event).push(listener)
+}
+function emitBridgeEvent(event, data) {
+  const listeners = eventListeners.get(event)
+  if (listeners) {
+    for (const fn of listeners) {
+      try { fn(data) } catch { /* ignore listener errors */ }
+    }
+  }
+}
+
 function json (res, status, body) {
   const text = JSON.stringify(body ?? null)
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(text) })
@@ -302,6 +317,22 @@ function startServer () {
         }
         entry.resolve(normaliseResult(body))
       }
+      json(res, 200, { ok: true })
+      return
+    }
+
+    if (req.method === 'POST' && url.pathname === '/event') {
+      let body
+      try {
+        body = JSON.parse(await readBody(req) || '{}')
+      } catch (error) {
+        json(res, 400, { ok: false, error: { code: 'bad_request', message: String(error?.message ?? error) } })
+        return
+      }
+      const event = String(body.event ?? '')
+      log(`event[ui] ${event} ${JSON.stringify(body.data ?? {})}`)
+      // Emit to any registered listeners (plugin tools, etc.)
+      emitBridgeEvent(event, body.data ?? {})
       json(res, 200, { ok: true })
       return
     }

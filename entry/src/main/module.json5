@@ -97,6 +97,18 @@
             "resource": "$profile:accessibility_config"
           }
         ]
+      },
+      {
+        "name": "DshFormAbility",
+        "srcEntry": "./ets/formability/DshFormAbility.ets",
+        "type": "form",
+        "exported": false,
+        "metadata": [
+          {
+            "name": "ohos.extension.form",
+            "resource": "$profile:form_config"
+          }
+        ]
       }
     ]
   }

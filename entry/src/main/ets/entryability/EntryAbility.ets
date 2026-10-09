@@ -64,7 +64,61 @@ export default class EntryAbility extends UIAbility {
       token = raw.trim();
       AppStorage.setOrCreate<string>('dshToken', token);
     }
+    this.handleWant(want);
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
+  }
+
+  onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    this.handleWant(want);
+    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onNewWant');
+  }
+
+  /** Route card postCardAction events (call method → params.method). */
+  private handleWant(want: Want): void {
+    const params: Record<string, Object> = want.parameters ?? {};
+    const method = params['method'];
+    if (method === 'onCardClick') {
+      // Bring the main window forward (same as notification click).
+      this.activateMainWindow();
+    } else if (method === 'onCardRefresh') {
+      // Forward the refresh request to the node side via the bridge agent.
+      if (this.bridge !== undefined) {
+        this.bridge.sendEvent('cardRefresh', this.nowMap());
+      }
+    }
+  }
+
+  private nowMap(): Map<string, Object> {
+    const m = new Map<string, Object>();
+    m.set('timestamp', Date.now());
+    return m;
+  }
+
+  private activateMainWindow(): void {
+    try {
+      const want: Want = {
+        bundleName: this.context.abilityInfo.bundleName,
+        abilityName: this.context.abilityInfo.name
+      };
+      const wantAgentInfo: wantAgent.WantAgentInfo = {
+        wants: [want],
+        operationType: wantAgent.OperationType.START_ABILITY,
+        requestCode: 0,
+        wantAgentFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
+      };
+      wantAgent.getWantAgent(wantAgentInfo).then((agent: WantAgent) => {
+        const triggerInfo: wantAgent.TriggerInfo = {
+          code: 0
+        };
+        wantAgent.trigger(agent, triggerInfo, (err: BusinessError) => {
+          if (err) {
+            hilog.error(DOMAIN, 'testTag', 'trigger failed: %{public}s', JSON.stringify(err));
+          }
+        });
+      });
+    } catch (err) {
+      hilog.error(DOMAIN, 'testTag', 'activateMainWindow failed: %{public}s', JSON.stringify(err));
+    }
   }
 
   private loadColorMode(): string {

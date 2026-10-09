@@ -417,10 +417,11 @@ export class AccessibilityBridgeAgent {
     try {
       // Rect is a plain interface here ({left, top, width, height}); ArkTS
       // rejects casting it to Record<string, number>, so read the fields.
-      const box: Rect = await element.attributeValue('rect');
-      if (box === undefined || box === null) {
+      const raw = await element.attributeValue('rect');
+      if (raw === undefined || raw === null) {
         return empty;
       }
+      const box = raw as Rect;
       return { left: box.left, top: box.top, width: box.width, height: box.height };
     } catch (err) {
       return empty;

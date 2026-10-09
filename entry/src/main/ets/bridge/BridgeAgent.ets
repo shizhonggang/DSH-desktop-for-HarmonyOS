@@ -38,6 +38,8 @@ import { common, Want, wantAgent, WantAgent } from '@kit.AbilityKit';
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { notificationManager } from '@kit.NotificationKit';
+import { formProvider, formInfo } from '@kit.FormKit';
+import DshFormAbility from '../formability/DshFormAbility';
 
 const DOMAIN = 0x0000;
 const TAG = 'DshBridge';
@@ -112,6 +114,21 @@ export class BridgeAgent {
       this.timer = -1;
     }
     hilog.info(DOMAIN, TAG, '%{public}s', 'bridge stopped');
+  }
+
+  /**
+   * Fire-and-forget event to the node side. Used for card refresh requests
+   * and other UI-initiated events that don't need a response.
+   */
+  sendEvent(event: string, data: Map<string, Object>): void {
+    const record: Record<string, Object> = {};
+    data.forEach((value: Object, key: string) => {
+      record[key] = value;
+    });
+    const body = JSON.stringify({ event, data: record });
+    this.request('/event', http.RequestMethod.POST, body, POST_READ_TIMEOUT_MS).catch((err: Error) => {
+      hilog.error(DOMAIN, TAG, 'sendEvent %{public}s failed: %{public}s', event, JSON.stringify(err));
+    });
   }
 
   private schedule(delayMs: number): void {
@@ -200,6 +217,9 @@ export class BridgeAgent {
     }
     if (action === 'dismissNotification') {
       return this.dismissNotification(args);
+    }
+    if (action === 'updateCard') {
+      return this.updateCard(args);
     }
     return Promise.reject(new Error('unsupported action: ' + action));
   }
@@ -381,6 +401,7 @@ export class BridgeAgent {
     if (longText.length > 0) {
       const longRequest: notificationManager.NotificationRequest = {
         id: id,
+        slotType: 1,
         content: {
           notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_LONG_TEXT,
           longText: {
@@ -397,6 +418,7 @@ export class BridgeAgent {
     } else {
       const basicRequest: notificationManager.NotificationRequest = {
         id: id,
+        slotType: 1,
         content: {
           notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
           normal: {
@@ -420,6 +442,50 @@ export class BridgeAgent {
     }
     await notificationManager.cancel(id);
     return '{"dismissed":true,"id":' + id.toString() + '}';
+  }
+
+  /**
+   * Push data to the DSH service card (负一屏 / 桌面卡片).
+   *
+   * The card UI (pages/DshCard.ets) reads keys: taskStatus, taskTitle,
+   * taskDetail, updatedAt, runningCount. Any subset may be sent; missing
+   * keys keep their previous values because FormBindingData merges.
+   *
+   * Requires an active card instance — the user must have pinned the card
+   * first. If no card exists the call is a no-op (returns cardFound:false).
+   */
+  private async updateCard(args: Record<string, Object>): Promise<string> {
+    const formId = this.stringArg(args, 'formId');
+    const data = new Map<string, Object>();
+    // Copy known card keys from args into the binding data payload.
+    const keys = ['taskStatus', 'taskTitle', 'taskDetail', 'updatedAt', 'runningCount',
+      'tasks', 'rounds', 'steps', 'tokRate', 'tokTotal', 'cacheRate', 'progress'];
+    for (const key of keys) {
+      const value = args[key];
+      if (value !== undefined && value !== null) {
+        data.set(key, value);
+      }
+    }
+    if (data.size === 0) {
+      throw new Error('updateCard: at least one of ' + keys.join('/') + ' is required');
+    }
+    if (formId.length > 0) {
+      DshFormAbility.updateCardData(this.abilityContext, formId, data);
+      return '{"updated":true,"formId":"' + formId + '"}';
+    }
+    // No formId given — broadcast to every active card for this bundle.
+    try {
+      const formIds: formInfo.RunningFormInfo[] = await formProvider.getPublishedRunningFormInfos();
+      const mine = formIds.filter((info: formInfo.RunningFormInfo) =>
+        info.bundleName === SHELL_BUNDLE_NAME
+      );
+      for (const info of mine) {
+        DshFormAbility.updateCardData(this.abilityContext, info.formId, data);
+      }
+      return '{"updated":true,"cards":' + mine.length.toString() + '}';
+    } catch (err) {
+      throw new Error('updateCard: ' + this.text(err));
+    }
   }
 
   /**
