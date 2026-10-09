@@ -33,47 +33,7 @@
  * Bottom bar mirrors the DSH Web UI status strip.
  */
 
-interface TaskItem {
-  title: string;
-  status: string;
-  detail: string;
-}
-
-function statusColorLarge(status: string): string {
-  switch (status) {
-    case 'running': return '#4CAF50';
-    case 'waiting': return '#FF9800';
-    case 'error': return '#F44336';
-    case 'done': return '#2196F3';
-    default: return '#9E9E9E';
-  }
-}
-
-function statusLabelLarge(status: string): string {
-  switch (status) {
-    case 'running': return 'Running';
-    case 'waiting': return 'Waiting';
-    case 'error': return 'Error';
-    case 'done': return 'Done';
-    default: return 'Idle';
-  }
-}
-
-/** Parse the tasks JSON safely; returns [] on any failure. */
-function parseTasksLarge(raw: string): TaskItem[] {
-  try {
-    const arr: Array<Record<string, Object>> = JSON.parse(raw);
-    if (!Array.isArray(arr)) return [];
-    return arr.map((item: Record<string, Object>) => {
-      const title = typeof item['title'] === 'string' ? item['title'] as string : '';
-      const status = typeof item['status'] === 'string' ? item['status'] as string : 'idle';
-      const detail = typeof item['detail'] === 'string' ? item['detail'] as string : '';
-      return { title, status, detail } as TaskItem;
-    });
-  } catch {
-    return [];
-  }
-}
+import { TaskItem, statusColor, statusLabel, parseTasks } from './CardShared';
 
 @Entry
 @Component
@@ -94,18 +54,18 @@ struct DshCardLarge {
   @State tasks: TaskItem[] = [];
 
   aboutToAppear(): void {
-    this.tasks = parseTasksLarge(this.tasksJson);
+    this.tasks = parseTasks(this.tasksJson);
   }
 
   onTasksChanged(): void {
-    this.tasks = parseTasksLarge(this.tasksJson);
+    this.tasks = parseTasks(this.tasksJson);
   }
 
   @Builder
   TaskRow(task: TaskItem) {
     Row({ space: 6 }) {
       Circle({ width: 6, height: 6 })
-        .fill(statusColorLarge(task.status))
+        .fill(statusColor(task.status))
       Text(task.title)
         .fontSize(12)
         .fontColor('#E0E0E0')
@@ -119,9 +79,9 @@ struct DshCardLarge {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
-      Text(statusLabelLarge(task.status))
+      Text(statusLabel(task.status))
         .fontSize(10)
-        .fontColor(statusColorLarge(task.status))
+        .fontColor(statusColor(task.status))
     }
     .width('100%')
     .padding({ top: 3, bottom: 3 })

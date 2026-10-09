@@ -15,30 +15,17 @@
 
 /**
  * DSH service card — 2x4 wide.
- * Status dot + title + detail + running count + last refresh time + refresh button.
+ * Status dot + title + detail + running count + last refresh time +
+ * manual refresh button.
+ *
+ * IMPORTANT — ArkUI constraint: state must be bound directly in build().
+ * Reading state inside a getter is NOT tracked by the framework, so derived
+ * values are pushed into @State fields by refresh() instead.
  */
+import { TaskItem, statusColor, statusLabel, parsePrimaryTask } from './CardShared';
+
 // postCardAction is a global ArkUI function (declared in the ArkUI common
 // runtime), not an import from @kit.FormKit.
-
-function statusColorWide(status: string): string {
-  switch (status) {
-    case 'running': return '#4CAF50';
-    case 'waiting': return '#FF9800';
-    case 'error': return '#F44336';
-    case 'done': return '#2196F3';
-    default: return '#9E9E9E';
-  }
-}
-
-function statusLabelWide(status: string): string {
-  switch (status) {
-    case 'running': return 'Running';
-    case 'waiting': return 'Waiting';
-    case 'error': return 'Error';
-    case 'done': return 'Done';
-    default: return 'Idle';
-  }
-}
 
 @Entry
 @Component
@@ -48,15 +35,43 @@ struct DshCardWide {
   @LocalStorageProp('taskDetail') taskDetail: string = 'No active task';
   @LocalStorageProp('updatedAt') updatedAt: string = '';
   @LocalStorageProp('runningCount') runningCount: number = 0;
+  @LocalStorageProp('tasks') @Watch('onTasksChanged') tasksJson: string = '[]';
+
+  // Values actually rendered — written by refresh(), never read via a getter.
+  @State dispTitle: string = '';
+  @State dispDetail: string = '';
+  @State dispStatus: string = '';
+
+  aboutToAppear(): void {
+    this.refresh();
+  }
+
+  onTasksChanged(): void {
+    this.refresh();
+  }
+
+  /** Recompute the displayed values from the current binding data. */
+  refresh(): void {
+    const picked: TaskItem | null = parsePrimaryTask(this.tasksJson);
+    if (picked === null) {
+      this.dispTitle = this.taskTitle;
+      this.dispDetail = this.taskDetail;
+      this.dispStatus = this.taskStatus;
+      return;
+    }
+    this.dispTitle = picked.title !== '' ? picked.title : this.taskTitle;
+    this.dispDetail = picked.detail !== '' ? picked.detail : this.taskDetail;
+    this.dispStatus = picked.status !== '' ? picked.status : this.taskStatus;
+  }
 
   build() {
     Column({ space: 4 }) {
       // Title row
       Row() {
         Circle({ width: 8, height: 8 })
-          .fill(statusColorWide(this.taskStatus))
+          .fill(statusColor(this.dispStatus))
           .margin({ right: 6 })
-        Text(this.taskTitle)
+        Text(this.dispTitle)
           .fontSize(16)
           .fontWeight(FontWeight.Bold)
           .fontColor('#E0E0E0')
@@ -73,7 +88,7 @@ struct DshCardWide {
       .width('100%')
 
       // Detail
-      Text(this.taskDetail)
+      Text(this.dispDetail)
         .fontSize(13)
         .fontColor('#B0B0B0')
         .maxLines(2)
@@ -84,9 +99,9 @@ struct DshCardWide {
 
       // Bottom row: status + last refresh + refresh button
       Row({ space: 4 }) {
-        Text(statusLabelWide(this.taskStatus))
+        Text(statusLabel(this.dispStatus))
           .fontSize(11)
-          .fontColor(statusColorWide(this.taskStatus))
+          .fontColor(statusColor(this.dispStatus))
         Blank()
         if (this.updatedAt !== '') {
           Text(this.updatedAt)
