@@ -34,11 +34,18 @@
  *    declared in module.json5) covers the loopback HTTP traffic.
  */
 
-import { common, Want, wantAgent, WantAgent } from '@kit.AbilityKit';
+import { common, Want, wantAgent, WantAgent, PermissionRequestResult } from '@kit.AbilityKit';
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { notificationManager } from '@kit.NotificationKit';
 import { formProvider, formInfo } from '@kit.FormKit';
+import pasteboard from '@ohos.pasteboard';
+import window from '@ohos.window';
+import display from '@ohos.display';
+import image from '@ohos.multimedia.image';
+import fileIo from '@ohos.file.fs';
+import abilityAccessCtrl, { Permissions } from '@ohos.abilityAccessCtrl';
+import { Driver, ON, Component } from '@ohos.UiTest';
 import DshFormAbility from '../formability/DshFormAbility';
 
 const DOMAIN = 0x0000;
@@ -220,6 +227,48 @@ export class BridgeAgent {
     }
     if (action === 'updateCard') {
       return this.updateCard(args);
+    }
+    if (action === 'setClipboard') {
+      return this.setClipboard(args);
+    }
+    if (action === 'getClipboard') {
+      return this.getClipboard();
+    }
+    if (action === 'uiTestProbe') {
+      return this.uiTestProbe();
+    }
+    if (action === 'getWindowLayouts') {
+      return this.getWindowLayouts(args);
+    }
+    if (action === 'listMainWindows') {
+      return this.listMainWindows();
+    }
+    if (action === 'snapshotWindow') {
+      return this.snapshotWindow(args);
+    }
+    if (action === 'getGlobalWindowMode') {
+      return this.getGlobalWindowMode(args);
+    }
+    if (action === 'getSelfWindowInfo') {
+      return this.getSelfWindowInfo();
+    }
+    if (action === 'moveSelfWindow') {
+      return this.moveSelfWindow(args);
+    }
+    if (action === 'resizeSelfWindow') {
+      return this.resizeSelfWindow(args);
+    }
+    if (action === 'setSelfWindowMode') {
+      return this.setSelfWindowMode(args);
+    }
+    if (action === 'listDisplays') {
+      return this.listDisplays();
+    }
+    if (action === 'requestScreenCapture') {
+      return this.requestScreenCapture();
+    }
+    if (action === 'fetchFile') {
+      return this.fetchFile(args);
     }
     return Promise.reject(new Error('unsupported action: ' + action));
   }
@@ -443,6 +492,502 @@ export class BridgeAgent {
     await notificationManager.cancel(id);
     return '{"dismissed":true,"id":' + id.toString() + '}';
   }
+
+  /**
+   * Write text to the system pasteboard (L0 通路).
+   *
+   * Why this exists: filling long / CJK text into another app's field via
+   * `uitest uiInput inputText` is fragile (shell quoting, length limits),
+   * while the app process may write the clipboard natively. Pair this with
+   * a single Ctrl+V keyEvent injection (uitest uiInput keyEvent 29 47) after
+   * focusing the target field.
+   */
+  private async setClipboard(args: Record<string, Object>): Promise<string> {
+    const text = this.stringArg(args, 'text');
+    if (text.length === 0) {
+      return Promise.reject(new Error('setClipboard: "text" is required'));
+    }
+    const data: pasteboard.PasteData = pasteboard.createData('text/plain', text);
+    await pasteboard.getSystemPasteboard().setData(data);
+    hilog.info(DOMAIN, TAG, 'setClipboard: wrote %{public}d chars', text.length);
+    const len = text.length;
+    return '{"ok":true,"chars":' + len.toString() + '}';
+  }
+
+  /**
+   * Read the system pasteboard back (diagnostic companion of setClipboard).
+   *
+   * KNOWN PLATFORM LIMIT (measured 2026-10-10): reading another app's clip
+   * requires ohos.permission.READ_PASTEBOARD, which is availableLevel
+   * system_basic (provisionEnable=true, so it is ACL-able but needs a
+   * re-issued debug profile). With this app's current profile (apl=normal,
+   * allowed-acls=[]) hasData() reports true while getMimeTypes()/getRecordCount()
+   * come back empty — i.e. the clip is invisible, not absent. So treat an empty
+   * result here as "not permitted", and use `testhelper get-pastedata` over hdc
+   * for a ground-truth read. Writing (setClipboard) needs no permission at all.
+   */
+  private async getClipboard(): Promise<string> {
+    const pb = pasteboard.getSystemPasteboard();
+    const has = await pb.hasData();
+    if (!has) {
+      return '{"hasData":false}';
+    }
+    const data: pasteboard.PasteData = await pb.getData();
+    // getPrimaryText() reads record 0; when the clip was written with a
+    // non-text MIME the plain-text getter yields "" even though the pasteboard
+    // is non-empty, so fall back to reading the first record explicitly and
+    // report the type/record count to make that distinguishable from "empty".
+    // Defensive: getMimeTypes()/getRecordCount() can be undefined on this
+    // platform, so every accessor is guarded rather than trusted.
+    let text: string = data.getPrimaryText();
+    if (text === undefined || text === null) {
+      text = '';
+    }
+    if (text.length === 0) {
+      const mimes: Array<string> | undefined = data.getMimeTypes();
+      const countRaw: number | undefined = data.getRecordCount();
+      const count = (countRaw !== undefined && countRaw !== null) ? countRaw : 0;
+      if (count > 0) {
+        const rec: pasteboard.PasteDataRecord = data.getRecordAt(0);
+        const recText: string = rec.toPlainText();
+        if (recText !== undefined && recText !== null && recText.length > 0) {
+          text = recText;
+        }
+      }
+      const mimeCount = (mimes !== undefined && mimes !== null) ? mimes.length : 0;
+      const preview0 = text.slice(0, 80);
+      return '{"hasData":true' +
+        ',"mimeTypes":' + mimeCount.toString() +
+        ',"records":' + count.toString() +
+        ',"length":' + text.length.toString() +
+        ',"truncated":' + (text.length > preview0.length ? 'true' : 'false') +
+        ',"text":"' + this.esc(preview0) + '"}';
+    }
+    const preview = text.slice(0, 80);
+    return '{"hasData":true' +
+      ',"length":' + text.length.toString() +
+      ',"truncated":' + (text.length > preview.length ? 'true' : 'false') +
+      ',"text":"' + this.esc(preview) + '"}';
+  }
+
+  /**
+   * Probe whether the in-process UiTest API (@ohos.UiTest) is usable.
+   * If it works, DSH can drive the whole machine without hdc.
+   */
+  private async uiTestProbe(): Promise<string> {
+    const dumpPath = '/data/storage/el2/base/dsh-home/tmp/uitest-probe.json';
+    try {
+      const driver: Driver = Driver.create();
+      let dumped = false;
+      let dumpError = '';
+      try {
+        dumped = await driver.dumpLayout(dumpPath);
+      } catch (de) {
+        dumpError = this.text(de);
+      }
+      let found = -1;
+      let findError = '';
+      try {
+        const comps: Array<Component> = await driver.findComponents(ON.clickable(true));
+        found = comps.length;
+      } catch (fe) {
+        findError = this.text(fe);
+      }
+      return '{"ok":true,"dump":' + (dumped ? 'true' : 'false') +
+        ',"dumpError":"' + dumpError.replace(/"/g, '\\"') + '"' +
+        ',"clickableFound":' + found.toString() +
+        ',"findError":"' + findError.replace(/"/g, '\\"') + '"}';
+    } catch (e) {
+      return '{"ok":false,"error":"' + this.text(e).replace(/"/g, '\\"') + '"}';
+    }
+  }
+  // ---------------------------------------------------------------------
+  // Window perception & self-window control
+  //
+  // Reachability notes (verified against the signing profile: apl=normal,
+  // acls=[] so NO system_basic permission is available):
+  //   * getAllWindowLayoutInfo / getWindowsByCoordinate / getGlobalWindowMode
+  //     need no permission at all.
+  //   * getAllMainWindowInfo / getMainWindowSnapshot need
+  //     ohos.permission.CUSTOM_SCREEN_CAPTURE which is availableLevel "normal"
+  //     (user_grant) -> declare it in module.json5 and the first call prompts.
+  //   * Window.moveWindowTo/resize/maximize/recover only ever affect THIS
+  //     app's own windows. There is no public API to move another app's
+  //     window, by design.
+  // ---------------------------------------------------------------------
+
+  /** Escapes a string for embedding in a hand-built JSON literal. */
+  private esc(value: string): string {
+    return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+  }
+
+  /** Picks the display to query: explicit arg, else the default display. */
+  private resolveDisplayId(args: Record<string, Object>): number {
+    const explicit = this.numberArg(args, 'displayId');
+    if (explicit > 0) {
+      return explicit;
+    }
+    try {
+      const d: display.Display = display.getDefaultDisplaySync();
+      return d.id;
+    } catch (err) {
+      hilog.warn(DOMAIN, TAG, 'getDefaultDisplaySync failed: %{public}s', this.text(err));
+      return 0;
+    }
+  }
+
+  /**
+   * All windows currently visible on a display, ordered top-most first.
+   *
+   * Needs no permission. Each entry is the window rectangle in px; the doc
+   * warns the width/height are already scale-adjusted, and that a window
+   * covered by a translucent or animating window still counts as visible, so
+   * callers should reason about occlusion themselves using the z-order.
+   */
+  private async getWindowLayouts(args: Record<string, Object>): Promise<string> {
+    const displayId = this.resolveDisplayId(args);
+    try {
+      const infos: Array<window.WindowLayoutInfo> = await window.getAllWindowLayoutInfo(displayId);
+      const parts: string[] = [];
+      for (let i = 0; i < infos.length; i++) {
+        const r = infos[i].windowRect;
+        parts.push('{"index":' + i.toString() +
+          ',"left":' + r.left.toString() +
+          ',"top":' + r.top.toString() +
+          ',"width":' + r.width.toString() +
+          ',"height":' + r.height.toString() + '}');
+      }
+      return '{"ok":true,"displayId":' + displayId.toString() +
+        ',"count":' + infos.length.toString() +
+        ',"windows":[' + parts.join(',') + ']}';
+    } catch (err) {
+      throw new Error('getWindowLayouts: ' + this.text(err));
+    }
+  }
+
+  /**
+   * Every main window on the system: windowId, display, showing, label.
+   *
+   * This is the key to per-window capture, because snapshotWindow() takes the
+   * windowIds returned here. Requires ohos.permission.CUSTOM_SCREEN_CAPTURE.
+   */
+  private async listMainWindows(): Promise<string> {
+    try {
+      const infos: Array<window.MainWindowInfo> = await window.getAllMainWindowInfo();
+      const parts: string[] = [];
+      for (let i = 0; i < infos.length; i++) {
+        const w = infos[i];
+        parts.push('{"displayId":' + w.displayId.toString() +
+          ',"windowId":' + w.windowId.toString() +
+          ',"showing":' + (w.showing ? 'true' : 'false') +
+          ',"label":"' + this.esc(w.label) + '"}');
+      }
+      return '{"ok":true,"count":' + infos.length.toString() +
+        ',"windows":[' + parts.join(',') + ']}';
+    } catch (err) {
+      throw new Error('listMainWindows: ' + this.text(err) +
+        ' (needs ohos.permission.CUSTOM_SCREEN_CAPTURE)');
+    }
+  }
+
+  /**
+   * Captures the given main windows to PNG files under the DSH home.
+   *
+   * Requires ohos.permission.CUSTOM_SCREEN_CAPTURE. `args.windowIds` is a
+   * comma-separated list; `args.useCache` (default true) reuses the system's
+   * existing snapshot instead of forcing a fresh capture.
+   */
+  private async snapshotWindow(args: Record<string, Object>): Promise<string> {
+    const raw = this.stringArg(args, 'windowIds');
+    if (raw.length === 0) {
+      throw new Error('snapshotWindow: "windowIds" is required (comma-separated, from listMainWindows)');
+    }
+    const ids: Array<number> = [];
+    for (const piece of raw.split(',')) {
+      const trimmed = piece.trim();
+      if (trimmed.length === 0) {
+        continue;
+      }
+      const parsed = Number.parseInt(trimmed, 10);
+      if (Number.isNaN(parsed)) {
+        throw new Error('snapshotWindow: invalid window id "' + trimmed + '"');
+      }
+      ids.push(parsed);
+    }
+    if (ids.length === 0) {
+      throw new Error('snapshotWindow: no valid window ids parsed from "' + raw + '"');
+    }
+    const config: window.WindowSnapshotConfiguration = {
+      useCache: this.stringArg(args, 'useCache') !== 'false'
+    };
+    try {
+      const maps: Array<image.PixelMap | undefined> = await window.getMainWindowSnapshot(ids, config);
+      // NOTE: the ArkTS process sees its OWN sandbox, not the dsh home on the
+      // host FS — a literal /data/storage/el2/base/dsh-home/tmp path does not
+      // resolve here. Use the ability's filesDir, which is the app-sandbox
+      // equivalent of <dsh home>/tmp (both land in the same bundle sandbox).
+      const dir = this.abilityContext.filesDir + '/dsh-shots';
+      try {
+        fileIo.mkdirSync(dir, true);
+      } catch (de) {
+        hilog.warn(DOMAIN, TAG, 'snapshotWindow: mkdir %{public}s failed: %{public}s', dir, this.text(de));
+      }
+      const parts: string[] = [];
+      for (let i = 0; i < maps.length; i++) {
+        const map: image.PixelMap | undefined = maps[i];
+        if (map === undefined || map === null) {
+          parts.push('{"windowId":' + ids[i].toString() + ',"ok":false}');
+          continue;
+        }
+        const stamp = Date.now().toString();
+        const abs = dir + '/win-' + ids[i].toString() + '-' + stamp + '.png';
+        try {
+          const packer: image.ImagePacker = image.createImagePacker();
+          const opt: image.PackingOption = { format: 'image/png', quality: 100 };
+          const buf: ArrayBuffer = await packer.packing(map, opt);
+          const file: fileIo.File = fileIo.openSync(abs,
+            fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
+          fileIo.writeSync(file.fd, buf);
+          fileIo.closeSync(file);
+          parts.push('{"windowId":' + ids[i].toString() + ',"ok":true,"file":"' + this.esc(abs) + '"}');
+        } catch (pe) {
+          parts.push('{"windowId":' + ids[i].toString() + ',"ok":false,"error":"' + this.esc(this.text(pe)) + '"}');
+        }
+      }
+      return '{"ok":true,"count":' + maps.length.toString() + ',"files":[' + parts.join(',') + ']}';
+    } catch (err) {
+      throw new Error('snapshotWindow: ' + this.text(err) +
+        ' (needs ohos.permission.CUSTOM_SCREEN_CAPTURE)');
+    }
+  }
+
+  /** Window mode of the foreground window on a display. */
+  private async getGlobalWindowMode(args: Record<string, Object>): Promise<string> {
+    const displayId = this.resolveDisplayId(args);
+    try {
+      const mode: number = await window.getGlobalWindowMode(displayId);
+      return '{"ok":true,"displayId":' + displayId.toString() + ',"mode":' + mode.toString() + '}';
+    } catch (err) {
+      throw new Error('getGlobalWindowMode: ' + this.text(err));
+    }
+  }
+
+  /** Rectangle, status and mode of this app's own main window. */
+  private async getSelfWindowInfo(): Promise<string> {
+    try {
+      const win: window.Window = await window.getLastWindow(this.abilityContext);
+      const props: window.WindowProperties = win.getWindowProperties();
+      const globalRect = win.getGlobalRect();
+      const status: window.WindowStatusType = win.getWindowStatus();
+      // NOTE: this SDK's WindowProperties carries no bundleName (only id,
+      // displayId?, name?, windowRect, drawableRect, ...), so the bundle name
+      // is taken from the ability context instead.
+      const displayId = (props.displayId !== undefined) ? props.displayId : 0;
+      const winName = (props.name !== undefined) ? props.name : '';
+      return '{"ok":true' +
+        ',"windowId":' + props.id.toString() +
+        ',"displayId":' + displayId.toString() +
+        ',"windowName":"' + this.esc(winName) + '"' +
+        ',"bundleName":"' + this.esc(this.abilityContext.abilityInfo.bundleName) + '"' +
+        ',"rect":{"left":' + props.windowRect.left.toString() +
+        ',"top":' + props.windowRect.top.toString() +
+        ',"width":' + props.windowRect.width.toString() +
+        ',"height":' + props.windowRect.height.toString() + '}' +
+        ',"globalRect":{"left":' + globalRect.left.toString() +
+        ',"top":' + globalRect.top.toString() +
+        ',"width":' + globalRect.width.toString() +
+        ',"height":' + globalRect.height.toString() + '}' +
+        ',"status":' + status.toString() + '}';
+    } catch (err) {
+      throw new Error('getSelfWindowInfo: ' + this.text(err));
+    }
+  }
+
+  /** Moves this app's own window. `global` picks display-absolute coords. */
+  private async moveSelfWindow(args: Record<string, Object>): Promise<string> {
+    const x = this.numberArg(args, 'x');
+    const y = this.numberArg(args, 'y');
+    const useGlobal = this.stringArg(args, 'global') === 'true';
+    try {
+      const win: window.Window = await window.getLastWindow(this.abilityContext);
+      if (useGlobal) {
+        await win.moveWindowToGlobal(x, y);
+      } else {
+        await win.moveWindowTo(x, y);
+      }
+      return '{"ok":true,"x":' + x.toString() + ',"y":' + y.toString() +
+        ',"global":' + (useGlobal ? 'true' : 'false') + '}';
+    } catch (err) {
+      throw new Error('moveSelfWindow: ' + this.text(err));
+    }
+  }
+
+  /** Resizes this app's own window, in px. */
+  private async resizeSelfWindow(args: Record<string, Object>): Promise<string> {
+    const width = this.numberArg(args, 'width');
+    const height = this.numberArg(args, 'height');
+    if (width <= 0 || height <= 0) {
+      throw new Error('resizeSelfWindow: "width" and "height" must be positive');
+    }
+    try {
+      const win: window.Window = await window.getLastWindow(this.abilityContext);
+      await win.resize(width, height);
+      return '{"ok":true,"width":' + width.toString() + ',"height":' + height.toString() + '}';
+    } catch (err) {
+      throw new Error('resizeSelfWindow: ' + this.text(err));
+    }
+  }
+
+  /**
+   * Switches this app's own window between full screen / floating / recover /
+   * minimize / maximize.
+   */
+  private async setSelfWindowMode(args: Record<string, Object>): Promise<string> {
+    const mode = this.stringArg(args, 'mode');
+    if (mode.length === 0) {
+      throw new Error('setSelfWindowMode: "mode" is required ' +
+        '(fullscreen|exitfullscreen|maximize|minimize|recover|topmost|untopmost)');
+    }
+    try {
+      const win: window.Window = await window.getLastWindow(this.abilityContext);
+      if (mode === 'fullscreen') {
+        await win.setFullScreen(true);
+      } else if (mode === 'exitfullscreen') {
+        await win.setFullScreen(false);
+      } else if (mode === 'maximize') {
+        await win.maximize();
+      } else if (mode === 'minimize') {
+        await win.minimize();
+      } else if (mode === 'recover') {
+        await win.recover();
+      } else if (mode === 'topmost') {
+        // NOTE: this SDK has no window.WindowMode / setWindowMode (only the
+        // GlobalWindowMode union returned by getGlobalWindowMode), so the
+        // "float" case is served by setWindowTopmost instead.
+        await win.setWindowTopmost(true);
+      } else if (mode === 'untopmost') {
+        await win.setWindowTopmost(false);
+      } else {
+        throw new Error('setSelfWindowMode: unknown mode "' + mode + '"');
+      }
+      return '{"ok":true,"mode":"' + this.esc(mode) + '"}';
+    } catch (err) {
+      throw new Error('setSelfWindowMode: ' + this.text(err));
+    }
+  }
+
+  /**
+   * Reads a file out of THIS APP's private sandbox and returns it base64-encoded.
+   *
+   * Why it exists: snapshotWindow() writes PNGs into the HAP's own sandbox
+   * (abilityContext.filesDir = /data/storage/el2/base/haps/entry/files), which
+   * no uid-2000 shell / hdc session can read ("Permission denied"). Without a
+   * way to pull bytes out, a per-window screenshot would be unreachable by the
+   * node side. Small by design: pass `path` (absolute, inside the sandbox) and
+   * an optional `maxBytes` guard (default 4 MiB) so a big file cannot blow up
+   * the loopback JSON reply.
+   */
+  private async fetchFile(args: Record<string, Object>): Promise<string> {
+    const p = this.stringArg(args, 'path');
+    if (p.length === 0) {
+      throw new Error('fetchFile: "path" is required (absolute path inside this app sandbox)');
+    }
+    let maxBytes = 4 * 1024 * 1024;
+    const rawMax = this.numberArg(args, 'maxBytes');
+    if (rawMax > 0) {
+      maxBytes = rawMax;
+    }
+    try {
+      const st: fileIo.Stat = fileIo.statSync(p);
+      const size = st.size;
+      if (size > maxBytes) {
+        throw new Error('fetchFile: file is ' + size.toString() + ' bytes, over the ' +
+          maxBytes.toString() + ' byte cap; raise "maxBytes" if this is intended');
+      }
+      const file: fileIo.File = fileIo.openSync(p, fileIo.OpenMode.READ_ONLY);
+      const buf = new ArrayBuffer(size);
+      const read = fileIo.readSync(file.fd, buf);
+      fileIo.closeSync(file);
+      const bytes = new Uint8Array(buf.slice(0, read));
+      const b64 = this.base64(bytes);
+      return '{"ok":true,"path":"' + this.esc(p) + '","size":' + read.toString() +
+        ',"base64":"' + b64 + '"}';
+    } catch (err) {
+      throw new Error('fetchFile: ' + this.text(err));
+    }
+  }
+
+  /** Minimal standard-alphabet base64 encoder (ArkTS has no Buffer). */
+  private base64(bytes: Uint8Array): string {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    let out = '';
+    for (let i = 0; i < bytes.length; i += 3) {
+      const b0 = bytes[i];
+      const hasB1 = i + 1 < bytes.length;
+      const hasB2 = i + 2 < bytes.length;
+      const b1 = hasB1 ? bytes[i + 1] : 0;
+      const b2 = hasB2 ? bytes[i + 2] : 0;
+      out += alphabet.charAt(b0 >> 2);
+      out += alphabet.charAt(((b0 & 0x03) << 4) | (b1 >> 4));
+      out += hasB1 ? alphabet.charAt(((b1 & 0x0f) << 2) | (b2 >> 6)) : '=';
+      out += hasB2 ? alphabet.charAt(b2 & 0x3f) : '=';
+    }
+    return out;
+  }
+
+  /**
+   * Requests ohos.permission.CUSTOM_SCREEN_CAPTURE (user_grant, availableLevel
+   * normal) and reports the outcome.
+   *
+   * listMainWindows() / snapshotWindow() are the only two actions that need it.
+   * The first call makes the system show the grant dialog; until the user
+   * accepts, those actions fail with 201 (permission denied). Callers can drive
+   * this explicitly instead of relying on a surprise dialog mid-task.
+   */
+  private async requestScreenCapture(): Promise<string> {
+    const perm: Permissions = 'ohos.permission.CUSTOM_SCREEN_CAPTURE';
+    try {
+      const atManager = abilityAccessCtrl.createAtManager();
+      const result: PermissionRequestResult =
+        await atManager.requestPermissionsFromUser(this.abilityContext, [perm]);
+      const codes: string[] = [];
+      for (let i = 0; i < result.authResults.length; i++) {
+        codes.push(result.authResults[i].toString());
+      }
+      let granted = false;
+      for (let i = 0; i < result.authResults.length; i++) {
+        if (result.authResults[i] === 0) {
+          granted = true;
+        }
+      }
+      return '{"ok":true,"granted":' + (granted ? 'true' : 'false') +
+        ',"authResults":[' + codes.join(',') + ']}';
+    } catch (err) {
+      throw new Error('requestScreenCapture: ' + this.text(err));
+    }
+  }
+
+  /** Every display attached to the machine. */
+  private async listDisplays(): Promise<string> {
+    try {
+      const all: Array<display.Display> = await display.getAllDisplays();      const parts: string[] = [];
+      for (let i = 0; i < all.length; i++) {
+        const d = all[i];
+        parts.push('{"id":' + d.id.toString() +
+          ',"name":"' + this.esc(d.name) + '"' +
+          ',"width":' + d.width.toString() +
+          ',"height":' + d.height.toString() +
+          ',"densityDPI":' + d.densityDPI.toString() +
+          ',"densityPixels":' + d.densityPixels.toString() +
+          ',"refreshRate":' + d.refreshRate.toString() + '}');
+      }
+      return '{"ok":true,"count":' + all.length.toString() +
+        ',"displays":[' + parts.join(',') + ']}';
+    } catch (err) {
+      throw new Error('listDisplays: ' + this.text(err));
+    }
+  }
+
 
   /**
    * Push data to the DSH service card (负一屏 / 桌面卡片).

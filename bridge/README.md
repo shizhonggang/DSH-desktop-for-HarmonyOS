@@ -172,6 +172,74 @@ node bridge/bridge-server.mjs call '{"action":"ping"}'
 
 脚本里也可以直接打 HTTP：`POST http://127.0.0.1:3131/command`，返回 `{ok,data}` 或 `{ok:false,error}`。
 
+## 窗口感知与自身窗口控制（第三阶段，2026-10-10 实测可用）
+
+补上系统窗口能力后，桥从 10 个 action 扩到 **21 个**。这一组全部**在本机实测通过**
+（HUAWEI MateBook Pro / HarmonyOS 7.0.0.107）。
+
+```sh
+# 感知：所有可见窗口的矩形 + Z 序（index 0 最顶），零权限
+node bridge/bridge-server.mjs call '{"action":"getWindowLayouts"}'
+
+# 感知：跨应用主窗口清单（windowId + label + showing），需 CUSTOM_SCREEN_CAPTURE
+node bridge/bridge-server.mjs call '{"action":"listMainWindows"}'
+
+# 按 windowId 精准截图（不是全屏裁剪）
+node bridge/bridge-server.mjs call '{"action":"snapshotWindow","args":{"windowIds":"79"}}'
+
+# 把截图从应用沙箱取回来（base64），否则 node 侧读不到那个路径
+node bridge/bridge-server.mjs call '{"action":"fetchFile","args":{"path":"<snapshotWindow 返回的 file>"}}'
+
+# 前台窗口模式 / 本窗口几何与状态 / 显示器清单
+node bridge/bridge-server.mjs call '{"action":"getGlobalWindowMode"}'
+node bridge/bridge-server.mjs call '{"action":"getSelfWindowInfo"}'
+node bridge/bridge-server.mjs call '{"action":"listDisplays"}'
+
+# 管自己的窗口（只影响本应用，改不了别人的窗口——那是系统设计）
+node bridge/bridge-server.mjs call '{"action":"moveSelfWindow","args":{"x":400,"y":300}}'
+node bridge/bridge-server.mjs call '{"action":"resizeSelfWindow","args":{"width":1440,"height":920}}'
+node bridge/bridge-server.mjs call '{"action":"setSelfWindowMode","args":{"mode":"recover"}}'
+# mode: fullscreen | exitfullscreen | maximize | minimize | recover | topmost | untopmost
+```
+
+### 三处必须知道的行为（都是实测踩出来的）
+
+1. **`resizeSelfWindow` 在最大化状态下会报错**，这是对的：
+   `CheckAndModifyWindowRect failed`。先 `setSelfWindowMode {"mode":"recover"}` 再 resize。
+   同理 `moveSelfWindow` 在最大化时返回 `ok:true` 但视觉上不变——**先 recover 再摆位**。
+2. **`snapshotWindow` 写进的是应用自己的沙箱**
+   （`/data/storage/el2/base/haps/entry/files/dsh-shots/`），uid 2000 的 shell 与 hdc **都读不到**
+   （`Permission denied`）。必须用 `fetchFile` 把字节以 base64 取回来；带 `maxBytes` 上限，
+   默认 4 MiB。
+3. **`getClipboard` 读不到内容是权限问题，不是 bug**：读剪贴板需要
+   `ohos.permission.READ_PASTEBOARD`，它是 **system_basic**（只能走 ACL + 重签 profile）；
+   当前 profile（`apl=normal`, `allowed-acls=[]`）拿不到，所以 `hasData:true` 但内容为空。
+   **写**（`setClipboard`）零权限，实测写入成功（用 `hdc shell testhelper get-pastedata` 对过）。
+   要 ground-truth 读剪贴板，用 `testhelper get-pastedata`。
+
+### 权限：只需一个，且不需要 ACL
+
+`listMainWindows` / `snapshotWindow` 需要 `ohos.permission.CUSTOM_SCREEN_CAPTURE`，
+它 `availableLevel = normal`、`grantMode = user_grant` → **声明 + 首次弹窗授权即可，不用 ACL、不用重签**：
+已在 `module.json5` 声明；跑一次 `requestScreenCapture` 会弹系统授权框并回传结果：
+
+```sh
+node bridge/bridge-server.mjs call '{"action":"requestScreenCapture"}'
+# -> {"ok":true,"granted":true,"authResults":[0]}
+```
+
+未授权时这两个 action 会**如实报错**（`Permission verification failed`），不是静默失败。
+
+### 已确认补不了的（别提需求）
+
+- **跨应用窗口的 `bundleName`/`abilityName`**：需要 `VISIBLE_WINDOW_INFO`（system_basic）→ 要 ACL。
+  `getAllWindowLayoutInfo` 只给矩形，不给属主。
+- **移动/缩放"别人"的窗口**：SDK 里没有这个 API（`getWindowsByCoordinate` 跨进程报 1300002，
+  `shiftAppWindow*` 要求同进程）。只能靠系统快捷键或用户操作。
+- **进程内 UiTest**：`uiTestProbe` 实测 `Driver.create()` 返回 null
+  （`Cannot read property dumpLayout of null`）→ 本机 HAP 内跑不了 UiTest，仍要走 hdc。
+- **输入拦截/全局注入**：system_core/system_basic 权限墙，见 skill `harmonyos-pc-control`。
+
 ## 第二阶段：无障碍扩展（读界面 / 点控件）
 
 `uitest` / `snapshot_display` 对本应用域是 SELinux 死封，所以"读别人界面、点别人按钮"只能走系统正规通道：**无障碍扩展**（`AccessibilityExtensionAbility`）。

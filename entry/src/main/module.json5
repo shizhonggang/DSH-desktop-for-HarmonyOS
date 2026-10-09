@@ -20,6 +20,20 @@
           ],
           "when": "inuse"
         }
+      },
+      {
+        // 按窗口截图 / 枚举跨应用主窗口（bridge 的 listMainWindows + snapshotWindow）。
+        // availableLevel=normal、grantMode=user_grant：声明后首次调用时弹一次授权，
+        // 不需要 ACL、不需要重签 profile。见 skill
+        // harmonyos-pc-control/reference/window-boundary-confirmed.md。
+        "name": "ohos.permission.CUSTOM_SCREEN_CAPTURE",
+        "reason": "$string:permission_screen_capture_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
       }
     ],
     "abilities": [

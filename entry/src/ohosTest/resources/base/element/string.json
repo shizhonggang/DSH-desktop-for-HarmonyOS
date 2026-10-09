@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_test_desc",
+      "value": "dsh system-capability probe test module"
+    },
+    {
+      "name": "TestAbility_desc",
+      "value": "dsh probe test ability"
+    },
+    {
+      "name": "TestAbility_label",
+      "value": "dsh probe test"
+    }
+  ]
+}

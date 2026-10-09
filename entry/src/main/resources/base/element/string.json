@@ -17,6 +17,10 @@
       "value": "Access local DeepSeek Harness web service at 127.0.0.1:3080"
     },
     {
+      "name": "permission_screen_capture_reason",
+      "value": "Enumerate main windows and capture a single window so the DSH agent can perceive the desktop"
+    },
+    {
       "name": "form_mini_display_name",
       "value": "DSH Status"
     },
