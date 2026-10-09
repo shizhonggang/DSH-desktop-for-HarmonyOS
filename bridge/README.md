@@ -208,6 +208,44 @@ node bridge/bridge-server.mjs call '{"action":"a11yTap","args":{"x":800,"y":600}
 1. `module.json5` 中 `metadata[].name` 是否为 `ohos.accessibleability`（备选 `ohos.extension.accessibility`）—— 在编辑器里触发补全即可确认（和你确认 `type: accessibility` 的方法一样）
 2. `resources/base/profile/accessibility_config.json` 的字段是否被接受（当前是最小写法：`accessibilityCapabilities` + `accessibilityCapabilityRationale`）
 
+### ⚠️ 能力边界实测结论（2026-10-09，HUAWEI MateBook Pro / HarmonyOS 7.0.0.107）
+
+**第三方无障碍扩展在本机无法启用 —— 该路封死：**
+
+- `bm dump` 证明扩展**注册成功**：`extensionTypeName: "accessibility"`、
+  `name: "DshAccessibilityAbility"`、`process: com.example.dshdesktop:accessibility`、
+  `resource: $profile:accessibility_config`（我写的 profile 被接受）
+- 但「设置 → 辅助功能」页**只有**系统自身的 *视觉*（色彩校正 / 颜色反转）与 *听觉*（音频调节），
+  **没有任何「已安装的服务 / 无障碍服务」入口**（用 `uitest dumpLayout` 逐节点核对过，非"找不到"而是"不存在"）
+- 与华为官方文档**不提供**第三方无障碍服务开发指南一致 → 该能力保留给系统应用
+
+👉 因此：本目录的 a11y 代码**保持正确但当前不可用**（扩展永不连接，`healthz.a11y.connected` 恒为 false）。
+若将来 ROM 开放该入口，这套代码可以直接用。
+
+## 真正可用的 UI 操控通道：hdc → sh 域 → uitest
+
+`uitest` / `snapshot_display` 对**应用域**（`hishell_hap`）被 SELinux 封死，但在 **sh 域**完全可用：
+
+| 项 | 值 |
+|---|---|
+| hdc | `/data/service/hnp/hmos-clt.org/hmos-clt_1.0.0/sdk/default/openharmony/toolchains/hdc` |
+| 目标 | `127.0.0.1:34413`（DevEco 起的 hdcd；**不是** 8710，那个是 Offline） |
+| 进去后 | `uid=2000(shell)` / `context=u:r:sh:s0` |
+
+```sh
+H=/data/service/hnp/hmos-clt.org/hmos-clt_1.0.0/sdk/default/openharmony/toolchains/hdc
+$H shell "uitest dumpLayout -p /data/local/tmp/ui.json"    # 读界面树（含 bounds/text/type/clickable）
+$H file recv /data/local/tmp/ui.json ./ui.json             # 拉回本地
+$H shell "uitest uiInput click <x> <y>"                    # 点击（也支持 keyEvent/swipe/dircFling）
+$H shell "uitest screenCap -p /data/local/tmp/s.png"       # 截图（可拉回本地"看"屏幕）
+$H shell "bm dump -a"                                      # 列出全部已安装应用（应用域缺 DUMP 权限，sh 域有）
+$H shell "aa start -b <bundle> -a <ability>"               # 拉起应用
+```
+
+**坐标点击的两个坑（都实测踩过）**：
+1. `uiInput click` 用**绝对屏幕坐标**；多窗口重叠时会点到别的窗口 → 点之前先确认目标窗口在前台；
+2. 设置类应用的导航会滚动/改布局，**坐标必须每次从新鲜的 `dumpLayout` bounds 现取**，点完用截图复核。
+
 ## 在线查包名（可选）
 
 没有官方"包名查询"接口。实测可用的是本机这个第三方看板（收录的是**上架 AppGallery** 的应用）：

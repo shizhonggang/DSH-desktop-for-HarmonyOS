@@ -45,6 +45,14 @@
     node 侧改为**双通道**（按动作名前缀 `a11y*` 分流），`healthz` 分别报告。
     需要用户在「设置 → 辅助功能」手动开启；`module.json5` 新增 `type: "accessibility"`
     扩展声明 + `resources/base/profile/accessibility_config.json`。
+  - **实测边界（2026-10-09）**：第三方无障碍扩展在本机**无法启用**——扩展已正确注册
+    （bm dump 可见 accessibility 类型），但「设置 → 辅助功能」页只有系统自身的视觉/听觉选项，
+    **不存在「已安装的服务」入口**（uitest dumpLayout 逐节点核对）。与华为不放第三方无障碍
+    服务开发指南一致 → 该能力保留给系统应用。a11y 代码保留但当前不可用。
+  - **可用的 UI 操控通道**：`hdc → sh 域(uid 2000) → uitest`。hdc 取自 hmos-clt
+    （`/data/service/hnp/hmos-clt.org/hmos-clt_1.0.0/sdk/default/openharmony/toolchains/hdc`），
+    目标 `127.0.0.1:34413`。已实测：dumpLayout 读界面树、screenCap 截图、uiInput click 点击、
+    bm dump -a 列全部应用。详见 bridge/README.md。
   - 未新增任何权限：回环 HTTP 走已有的
     `ohos.permission.INTERNET`。
 
