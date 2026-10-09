@@ -30,7 +30,7 @@
  *          a11yTap / a11ySwipe / a11yLastEvent
  */
 
-import { AccessibilityElement, AccessibilityExtensionContext, GesturePath, GesturePoint } from '@kit.AccessibilityKit';
+import { AccessibilityElement, AccessibilityExtensionContext, GesturePath, GesturePoint, Rect } from '@kit.AccessibilityKit';
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 
@@ -415,17 +415,13 @@ export class AccessibilityBridgeAgent {
   private async rect(element: AccessibilityElement): Promise<Rect4> {
     const empty: Rect4 = { left: 0, top: 0, width: 0, height: 0 };
     try {
-      const rect = await element.attributeValue('rect');
-      if (rect === undefined || rect === null) {
+      // Rect is a plain interface here ({left, top, width, height}); ArkTS
+      // rejects casting it to Record<string, number>, so read the fields.
+      const box: Rect = await element.attributeValue('rect');
+      if (box === undefined || box === null) {
         return empty;
       }
-      const box = rect as Record<string, number>;
-      return {
-        left: typeof box['left'] === 'number' ? box['left'] : 0,
-        top: typeof box['top'] === 'number' ? box['top'] : 0,
-        width: typeof box['width'] === 'number' ? box['width'] : 0,
-        height: typeof box['height'] === 'number' ? box['height'] : 0
-      };
+      return { left: box.left, top: box.top, width: box.width, height: box.height };
     } catch (err) {
       return empty;
     }
