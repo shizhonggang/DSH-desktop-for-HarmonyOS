@@ -17,9 +17,11 @@ import { AbilityConstant, ConfigurationConstant, UIAbility, Want, wantAgent, Wan
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
+import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { notificationManager } from '@kit.NotificationKit';
 import { preferences } from '@kit.ArkData';
 import { BridgeAgent } from '../bridge/BridgeAgent';
+import { PermissionRequester, PermissionOutcome } from '../bridge/PermissionRequester';
 
 const DOMAIN = 0x0000;
 // Loopback port served by the node side (bridge/bridge-server.mjs). The agent
@@ -48,6 +50,8 @@ export default class EntryAbility extends UIAbility {
   // ArkTS -> dsh bridge (see bridge/BridgeAgent.ets). Runs for the lifetime of
   // this Ability so dsh can call ArkTS-only ability APIs while the shell is up.
   private bridge?: BridgeAgent;
+  // user_grant 权限申请结果（normal 级，无需 ACL）。见 PermissionRequester.ets
+  private permissions?: PermissionRequester;
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     const colorMode = this.loadColorMode();
     this.applyColorMode(colorMode);
@@ -153,6 +157,82 @@ export default class EntryAbility extends UIAbility {
       this.bridge.stop();
       this.bridge = undefined;
     }
+    try {
+      backgroundTaskManager.stopBackgroundRunning(this.context).catch((err: BusinessError) => {
+        hilog.warn(DOMAIN, 'testTag', 'stopBackgroundRunning failed: %{public}s', JSON.stringify(err));
+      });
+    } catch (err) {
+      hilog.warn(DOMAIN, 'testTag', 'stopBackgroundRunning threw: %{public}s', JSON.stringify(err));
+    }
+  }
+
+  /**
+   * 申请 MODE_TASK_KEEPING 长时任务（计算型，PC/2in1 免 ACL）。
+   * 成功后面系统挂一条无提示音常驻通知，点击回到本 Ability。
+   */
+  private startContinuousTask(): void {
+    try {
+      const want: Want = {
+        bundleName: BUNDLE_NAME,
+        abilityName: ABILITY_NAME
+      };
+      const wantAgentInfo: wantAgent.WantAgentInfo = {
+        wants: [want],
+        actionType: wantAgent.OperationType.START_ABILITY,
+        requestCode: 0,
+        actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
+      };
+      wantAgent.getWantAgent(wantAgentInfo).then((agent: WantAgent) => {
+        // 官方指南路径：字符串数组重载（module.json5 已声明 backgroundModes:
+        // ["taskKeeping"]）。ContinuousTaskRequest 类不可 new（系统类），曾因此
+        // 申请静默失败。
+        const modes: Array<string> = ['taskKeeping'];
+        return backgroundTaskManager.startBackgroundRunning(this.context, modes, agent);
+      }).then(() => {
+        hilog.info(DOMAIN, 'testTag', '%{public}s', 'continuous task (MODE_TASK_KEEPING) started');
+        this.reportContinuousTask('started', '');
+      }).catch((err: BusinessError) => {
+        hilog.error(DOMAIN, 'testTag', 'startBackgroundRunning failed: %{public}s', JSON.stringify(err));
+        this.reportContinuousTask('failed', JSON.stringify(err));
+      });
+    } catch (err) {
+      hilog.error(DOMAIN, 'testTag', 'startContinuousTask threw: %{public}s', JSON.stringify(err));
+      this.reportContinuousTask('threw', JSON.stringify(err));
+    }
+  }
+
+  /** 长时任务结果回传 node 侧（bridge.log 可读，绕开沙箱内 hilog 不可见的问题）。 */
+  private reportContinuousTask(result: string, detail: string): void {
+    if (this.bridge === undefined) return;
+    const m = new Map<string, Object>();
+    m.set('timestamp', Date.now());
+    m.set('result', result);
+    m.set('detail', detail);
+    this.bridge.sendEvent('continuousTask', m);
+  }
+
+  /**
+   * 逐个申请 module.json5 里声明的 user_grant 权限。
+   * 结果写入 this.permissions，供 bridge 的 getPermissionStatus 查询。
+   */
+  private requestUserPermissions(): void {
+    try {
+      this.permissions = new PermissionRequester(this.context);
+      this.permissions.requestAll().then((outcomes: PermissionOutcome[]) => {
+        const granted = outcomes.filter((o: PermissionOutcome) => o.granted).length;
+        hilog.info(DOMAIN, 'testTag', 'user_grant permissions: %{public}d/%{public}d granted',
+          granted, outcomes.length);
+      }).catch((err: Object) => {
+        hilog.warn(DOMAIN, 'testTag', 'permission request failed: %{public}s', JSON.stringify(err));
+      });
+    } catch (err) {
+      hilog.warn(DOMAIN, 'testTag', 'failed to init PermissionRequester: %{public}s', JSON.stringify(err));
+    }
+  }
+
+  /** 供 bridge 读取最近一次权限申请结果。 */
+  permissionOutcomes(): PermissionOutcome[] {
+    return this.permissions !== undefined ? this.permissions.snapshot() : [];
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
@@ -166,6 +246,17 @@ export default class EntryAbility extends UIAbility {
     } catch (err) {
       hilog.error(DOMAIN, 'testTag', 'Failed to start the dsh bridge. Cause: %{public}s', JSON.stringify(err));
     }
+
+    // Keep this process alive with a MODE_TASK_KEEPING continuous task
+    // (free of ACL on PC/2in1): the ArkTS bridge used to die whenever the
+    // system reclaimed the app (window closed / backgrounded), which was the
+    // root cause of "bridge down until start-bridge.sh". The system shows a
+    // silent ongoing notification while the task is active.
+    this.startContinuousTask();
+
+    // 申请 user_grant 权限（normal 级，无需 ACL）。首次运行会弹一次授权窗；
+    // 已授予的会被跳过。失败不影响主流程（能力降级，不阻断）。
+    this.requestUserPermissions();
 
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
