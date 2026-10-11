@@ -713,7 +713,13 @@ struct Index {
         name: 'dshNative',
         methodList: ['setSidebarCollapsed'],
         asyncMethodList: ['minimize', 'hide', 'close', 'zoomIn', 'zoomOut', 'resetZoom', 'toggleColorMode', 'toggleMaximize'],
-        controller: this.webController
+        controller: this.webController,
+        // Hardening: only the local dsh web origin may call the bridge
+        // (schema per ArkWeb doc "Invoking Application Functions on the
+        // Frontend Page"; object-level grant covers all methods).
+        permission: '{"javascriptProxyPermission":{"urlPermissionList":[' +
+          '{"scheme":"http","host":"127.0.0.1","port":"3080","path":""}' +
+          ']}}'
       })
       .onPageEnd((event) => {
         this.hideSessionLogButton();
