@@ -20,4 +20,14 @@
 # bridge/ 运行时产物（日志与 pid，不提交）
 bridge/bridge.log
 bridge/bridge.pid
+bridge/ui-events.json
 .bitfun/
+
+# 签名材料（证书/私钥/profile/含密钥的本地构建配置，切勿提交）
+key/
+
+# 本地备份与归档（公开仓库不上传）
+_backup/
+_archive/
+*.bak*
+*.myversion

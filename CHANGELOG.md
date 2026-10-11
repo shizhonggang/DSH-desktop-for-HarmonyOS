@@ -56,6 +56,38 @@
   - 未新增任何权限：回环 HTTP 走已有的
     `ohos.permission.INTERNET`。
 
+### 新增（2026-10-11）
+
+- **桥接层 10 → 21 动作**：新增窗口感知（`listMainWindows` / `getWindowLayouts`）、
+  窗口截图（`snapshotWindow` + `fetchFile` 取回字节）、自身窗口控制（`getSelfWindowInfo` /
+  `moveSelfWindow` / `resizeSelfWindow` / `setSelfWindowMode`）、`listDisplays`、
+  `requestScreenCapture`、应用内 OCR（`ocrImage`，Core Vision Kit）等。
+- **服务卡片修复与打通**：三卡片统一 `@State` + 抽取 `CardShared`（修复宽卡/迷你卡空白）、
+  大卡片任务列表改 `@Watch + @State`；桥 `updateCard` 广播路径改用零权限
+  `formProvider.getFormsInfo()`（原 `getPublishedRunningFormInfos()` 三方不可用，报 16500100），
+  宿主侧推送后桌面卡片实时刷新。
+- **自绘窗口描边**：窗口态下根层叠加 2vp 描边（圆角 16vp 与系统窗角实测对齐，
+  浅色 `rgba(0,0,0,0.25)` / 深色 `rgba(255,255,255,0.24)`），最大化/全屏自动隐藏；
+  最大化状态统一以 `window.getWindowStatus()` + `windowStatusDidChange` 事件为准。
+- **主题色衬底**：根 Stack 铺与 Web 主题同色的衬底（深 `#232426` / 浅 `#FFFFFF`），
+  掩盖 ArkWeb 窗口缩放时的异步重绘空白。
+- **JS 桥安全加固**：`javaScriptProxy` 增加 URL 白名单，`dshNative` 仅允许
+  `http://127.0.0.1:3080` 调用（官方 `javascriptProxyPermission` schema）。
+- **长时任务常驻**：`MODE_TASK_KEEPING` 连续任务（PC/2in1 免 ACL），关窗/后台后应用进程与
+  ArkTS 桥常驻，结果经桥 `sendEvent('continuousTask')` 回传 node 侧日志；
+  `launch-local.sh` 启动 HAP 前幂等确保 bridge-server 在跑。
+- **图标**：logo 反色为白鲸黑底、主体放大到 70%，并按墨迹质心居中修正视觉重心。
+
+### 修复（2026-10-11）
+
+- **绿灯/拖拽热区偶发失效**：最大化判定从本地标志位改为 `getWindowStatus()`（标志位会被
+  系统手势/双击脱同步）；最大化态下拖拽热区先 `recover()`（WMS 拒绝在最大化时 moveWindowTo）。
+- **描边撞色隐形**：系统深色 + 应用内浅色（或反之）时描边与窗口同色看似消失——
+  dark 资源限定符跟随系统模式而非应用覆盖，改为按应用有效颜色模式代码内计算
+  （`mediaquery` 监听系统档）。
+- **签名材料出仓**：`build-profile.json5` 的 `signingConfigs` 清空（含加密口令与本地证书
+  路径），证书/私钥/profile 统一放已被忽略的 `key/` 目录，本机构建见 README「签名」节。
+
 ## [1.2.0] - 2026-09-16
 
 ### 新增
