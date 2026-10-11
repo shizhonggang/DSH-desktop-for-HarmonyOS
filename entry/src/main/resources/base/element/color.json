@@ -3,6 +3,10 @@
     {
       "name": "start_window_background",
       "value": "#FFFFFF"
+    },
+    {
+      "name": "window_border",
+      "value": "#40000000"
     }
   ]
 }

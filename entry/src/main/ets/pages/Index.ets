@@ -77,9 +77,20 @@ struct Index {
 
   aboutToAppear(): void {
     this.checkServer();
-    // Cache the window for title-bar dragging.
+    // Cache the window for title-bar dragging, and keep the maximized state in
+    // sync with the window manager (drives the border overlay + green light).
     this.getMainWindow().then((win) => {
       this.cachedWindow = win;
+      if (!win) return;
+      this.updateMaximizedState(win);
+      try {
+        win.on('windowStatusDidChange', (status: window.WindowStatusType) => {
+          this.isMaximized =
+            status === window.WindowStatusType.MAXIMIZE || status === window.WindowStatusType.FULL_SCREEN;
+        });
+      } catch (err) {
+        console.error('Failed to subscribe windowStatusDidChange:', err);
+      }
     });
     try {
       this.densityPixels = display.getDefaultDisplaySync().densityPixels;
@@ -169,34 +180,45 @@ struct Index {
     }
   }
 
-  private async isWindowMaximized(): Promise<boolean> {
-    const win = this.cachedWindow ?? await this.getMainWindow();
-    if (!win) return false;
-    try {
-      const props = win.getWindowProperties();
-      // When windowRect equals the full screen work area, treat as maximized.
-      // This is a heuristic; HarmonyOS does not expose a direct isMaximized API.
-      return false;
-    } catch (err) {
-      return false;
-    }
-  }
+  // True while the window is maximized or full-screen. Synced from
+  // window.getWindowStatus() + the 'windowStatusDidChange' event, so the
+  // custom window border hides itself (macOS-style: no frame stroke when
+  // maximized) and the green traffic light never desyncs from reality.
+  @State isMaximized: boolean = false;
 
-  private isMaximizedWindow: boolean = false;
+  // Measured on HarmonyOS PC (MateBook Pro, OpenHarmony 7): the system clips
+  // window corners at ~25.6px with densityPixels 1.6125, i.e. 16vp. The custom
+  // border reuses this radius so its arc follows the system corner exactly.
+  private readonly WINDOW_CORNER_RADIUS_VP = 16;
+  private readonly WINDOW_BORDER_WIDTH_VP = 2;
 
   private async toggleMaximizeWindow(): Promise<void> {
     const win = this.cachedWindow ?? await this.getMainWindow();
     if (!win) return;
     try {
-      if (this.isMaximizedWindow) {
+      // Ask the window manager instead of trusting a local flag: the flag
+      // desynced whenever the window was (un)maximized by other means
+      // (system gesture, double-click, restore), which made the green
+      // traffic light appear to "occasionally do nothing".
+      const status = win.getWindowStatus();
+      if (status === window.WindowStatusType.MAXIMIZE || status === window.WindowStatusType.FULL_SCREEN) {
         await win.recover();
-        this.isMaximizedWindow = false;
       } else {
         await win.maximize();
-        this.isMaximizedWindow = true;
       }
+      this.updateMaximizedState(win);
     } catch (err) {
       console.error('Failed to toggle maximize/recover:', err);
+    }
+  }
+
+  private updateMaximizedState(win: window.Window): void {
+    try {
+      const status = win.getWindowStatus();
+      this.isMaximized =
+        status === window.WindowStatusType.MAXIMIZE || status === window.WindowStatusType.FULL_SCREEN;
+    } catch (err) {
+      console.error('Failed to read window status:', err);
     }
   }
 
@@ -574,6 +596,20 @@ struct Index {
         const win = this.cachedWindow;
         if (!win || event.touches.length === 0) return;
         if (event.type === TouchType.Down) {
+          // While maximized/full-screen the window manager rejects moveWindowTo
+          // (CheckAndModifyWindowRect failed), which made this drag strip feel
+          // dead. Restore to floating first; the next drag moves normally.
+          try {
+            const status = win.getWindowStatus();
+            if (status === window.WindowStatusType.MAXIMIZE || status === window.WindowStatusType.FULL_SCREEN) {
+              win.recover().catch((err: Error) => {
+                console.error('Failed to recover before drag:', err);
+              });
+              return;
+            }
+          } catch (err) {
+            console.error('Failed to read window status for drag:', err);
+          }
           const p = win.getWindowProperties();
           this.winStartLeft = p.windowRect.left;
           this.winStartTop = p.windowRect.top;
@@ -719,11 +755,31 @@ struct Index {
     }
   }
 
+  // Custom window frame stroke, drawn above all content (including the Web
+  // surface) but transparent to touches. The system window border is a 1px
+  // hairline with poor corner anti-aliasing (HarmonyOS PC offers no window
+  // border API — only shadow switches — so like macOS NSBorderlessWindowMask
+  // and Windows DWM client-drawn frames, we stroke our own inside edge).
+  // Hidden while maximized/full-screen, matching macOS/Windows chrome.
+  @Builder
+  WindowBorderOverlay() {
+    Column()
+      .width('100%')
+      .height('100%')
+      .border({
+        width: this.isMaximized ? 0 : this.WINDOW_BORDER_WIDTH_VP,
+        color: $r('app.color.window_border'),
+        radius: this.isMaximized ? 0 : this.WINDOW_CORNER_RADIUS_VP
+      })
+      .hitTestBehavior(HitTestMode.None)
+  }
+
   build() {
     Stack({ alignContent: Alignment.Top }) {
       this.Content()
       this.InvisibleDragZone()
       this.WindowControls()
+      this.WindowBorderOverlay()
     }
     .width('100%')
     .height('100%')
