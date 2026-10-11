@@ -57,6 +57,41 @@ const COMMAND_TIMEOUT_MS = Number(process.env.DSH_BRIDGE_TIMEOUT ?? 30000)
 const AGENT_STALE_MS = 20000
 const VERSION = '1.0.0'
 
+/**
+ * Durable spool for UI-initiated events (currently notification-button presses).
+ *
+ * `emitBridgeEvent` only reaches in-process listeners, and the DSH plugin is a
+ * separate process, so a press must be persisted to be consumable. The plugin
+ * polls this file; the newest MAX_UI_EVENTS records are kept so a press is never
+ * lost just because nothing happened to be listening at that instant.
+ */
+const UI_EVENTS_FILE = process.env.DSH_BRIDGE_EVENTS ?? path.join(HERE, 'ui-events.json')
+const MAX_UI_EVENTS = 100
+
+function readUiEvents () {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(UI_EVENTS_FILE, 'utf8'))
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function appendUiEvent (event, data) {
+  const record = { at: Date.now(), event, data: data ?? {} }
+  try {
+    const list = readUiEvents()
+    list.push(record)
+    while (list.length > MAX_UI_EVENTS) {
+      list.shift()
+    }
+    fs.writeFileSync(UI_EVENTS_FILE, JSON.stringify(list, null, 2) + '\n')
+  } catch (error) {
+    log(`ui-event spool write failed: ${error?.message ?? error}`)
+  }
+  return record
+}
+
 let seq = 0
 /**
  * Two independent channels, so the two ArkTS pollers never steal each other's
@@ -331,9 +366,20 @@ function startServer () {
       }
       const event = String(body.event ?? '')
       log(`event[ui] ${event} ${JSON.stringify(body.data ?? {})}`)
-      // Emit to any registered listeners (plugin tools, etc.)
+      // Emit to any registered listeners (plugin tools, etc.) …
       emitBridgeEvent(event, body.data ?? {})
+      // … and persist, so cross-process consumers (the DSH plugin polling
+      // /ui-events) still see it even if nothing was listening just now.
+      appendUiEvent(event, body.data ?? {})
       json(res, 200, { ok: true })
+      return
+    }
+
+    if (req.method === 'GET' && url.pathname === '/ui-events') {
+      const since = Number(url.searchParams.get('since') ?? 0) || 0
+      const all = readUiEvents()
+      const events = since > 0 ? all.filter((e) => Number(e?.at ?? 0) > since) : all
+      json(res, 200, { ok: true, now: Date.now(), count: events.length, events })
       return
     }
 
@@ -392,6 +438,18 @@ function startServer () {
     }
 
     json(res, 404, { ok: false, error: { code: 'not_found', message: `no route for ${req.method} ${url.pathname}` } })
+  })
+
+  // 幂等启动（2026-10-11，与 mobile-bridge.mjs 同款）：端口被占用说明已有
+  // 实例在服务——打日志并 exit 0 安静退出。这样 start-bridge.sh / dsh-web 的
+  // ensure 可以「总是启动」，避免「探活时旧实例还活着→跳过→重启杀旧实例→
+  // 谁都没起」的竞态（47cc 在移动桥上实测踩中）。
+  server.on('error', (e) => {
+    if (e && e.code === 'EADDRINUSE') {
+      log(`ℹ️ 端口 ${PORT} 已被占用（已有实例在服务），本实例退出`)
+      process.exit(0)
+    }
+    throw e
   })
 
   server.listen(PORT, HOST, () => {

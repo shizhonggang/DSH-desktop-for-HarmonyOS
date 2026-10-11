@@ -34,11 +34,10 @@ case "${1:-start}" in
     fi
     ;;
   start|*)
-    if alive; then
-      echo "[bridge] already running on port $PORT"
-      curl -s "$URL/healthz"; echo
-      exit 0
-    fi
+    # 2026-10-11：改为「总是启动」——bridge-server.mjs 现在对 EADDRINUSE
+    # 安静退出（exit 0），重复启动天然幂等。原来的「先探活活着就跳过」有竞态：
+    # 探活时旧实例还活着 → 跳过 → 宿主重启把旧实例杀掉 → 谁都没起
+    # （47cc 在移动桥 18090 上实测踩中，重启后通道全断）。
     nohup "$NODE_BIN" "$DIR/bridge-server.mjs" >>"$LOG" 2>&1 &
     echo $! > "$PIDFILE"
     i=0
