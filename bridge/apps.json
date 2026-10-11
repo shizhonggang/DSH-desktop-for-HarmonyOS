@@ -1,0 +1,35 @@
+{
+  "_readme": "应用别名表：供 node 侧 launchApp 动作使用（本机实测可拉起的组合）。新增应用只需在这里加一项，不需要重新构建 HAP。alias 和 label 都能作为 launchApp 的 app 参数。abilityName 各应用不同——华为系统应用里 MainAbility 与 EntryAbility 各占一半，必须实测。",
+  "apps": {
+    "notepad": {
+      "bundleName": "com.huawei.hmos.notepad",
+      "abilityName": "MainAbility",
+      "label": "备忘录"
+    },
+    "calendar": {
+      "bundleName": "com.huawei.hmos.calendar",
+      "abilityName": "MainAbility",
+      "label": "日历"
+    },
+    "mail": {
+      "bundleName": "com.huawei.hmos.email",
+      "abilityName": "EntryAbility",
+      "label": "邮件"
+    },
+    "maps": {
+      "bundleName": "com.huawei.hmos.maps.app",
+      "abilityName": "EntryAbility",
+      "label": "地图"
+    },
+    "finddevice": {
+      "bundleName": "com.huawei.hmos.finddevice",
+      "abilityName": "EntryAbility",
+      "label": "查找设备"
+    },
+    "ailife": {
+      "bundleName": "com.huawei.hmos.ailife",
+      "abilityName": "EntryAbility",
+      "label": "智慧生活"
+    }
+  }
+}

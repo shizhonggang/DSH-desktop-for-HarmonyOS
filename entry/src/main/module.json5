@@ -20,6 +20,20 @@
           ],
           "when": "inuse"
         }
+      },
+      {
+        // 按窗口截图 / 枚举跨应用主窗口（bridge 的 listMainWindows + snapshotWindow）。
+        // availableLevel=normal、grantMode=user_grant：声明后首次调用时弹一次授权，
+        // 不需要 ACL、不需要重签 profile。见 skill
+        // harmonyos-pc-control/reference/window-boundary-confirmed.md。
+        "name": "ohos.permission.CUSTOM_SCREEN_CAPTURE",
+        "reason": "$string:permission_screen_capture_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
       }
     ],
     "abilities": [
@@ -82,6 +96,33 @@
             "resource": "$profile:backup_config"
           }
         ],
+      },
+      {
+        // 无障碍服务：让 dsh 读取其他应用界面并点击控件。
+        // 需要用户在「设置 → 辅助功能」里手动开启。
+        // metadata.name 若被 DevEco 标红，用它的补全列表校正（备选：ohos.extension.accessibility）。
+        "name": "DshAccessibilityAbility",
+        "srcEntry": "./ets/accessibility/DshAccessibilityAbility.ets",
+        "type": "accessibility",
+        "exported": false,
+        "metadata": [
+          {
+            "name": "ohos.accessibleability",
+            "resource": "$profile:accessibility_config"
+          }
+        ]
+      },
+      {
+        "name": "DshFormAbility",
+        "srcEntry": "./ets/formability/DshFormAbility.ets",
+        "type": "form",
+        "exported": false,
+        "metadata": [
+          {
+            "name": "ohos.extension.form",
+            "resource": "$profile:form_config"
+          }
+        ]
       }
     ]
   }

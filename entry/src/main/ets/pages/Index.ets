@@ -15,7 +15,7 @@
 
 import { webview } from '@kit.ArkWeb';
 import { http } from '@kit.NetworkKit';
-import { window, display } from '@kit.ArkUI';
+import { window, display, mediaquery } from '@kit.ArkUI';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 
@@ -77,14 +77,39 @@ struct Index {
 
   aboutToAppear(): void {
     this.checkServer();
-    // Cache the window for title-bar dragging.
+    // Cache the window for title-bar dragging, and keep the maximized state in
+    // sync with the window manager (drives the border overlay + green light).
     this.getMainWindow().then((win) => {
       this.cachedWindow = win;
+      if (!win) return;
+      this.updateMaximizedState(win);
+      try {
+        win.on('windowStatusDidChange', (status: window.WindowStatusType) => {
+          this.isMaximized =
+            status === window.WindowStatusType.MAXIMIZE || status === window.WindowStatusType.FULL_SCREEN;
+        });
+      } catch (err) {
+        console.error('Failed to subscribe windowStatusDidChange:', err);
+      }
     });
     try {
       this.densityPixels = display.getDefaultDisplaySync().densityPixels;
     } catch (err) {
       console.error('Failed to read display density:', err);
+    }
+    // Track system dark mode for the window border when dshColorMode=system.
+    // Do NOT use a dark-qualified $r resource for the border: resource
+    // qualifiers follow the SYSTEM color mode, while the Web content follows
+    // the APP override — when the two disagree (e.g. system dark + app light)
+    // a resource-based border paints white-on-white and becomes invisible.
+    try {
+      const darkModeListener = mediaquery.matchMediaSync('(dark-mode: true)');
+      this.isSystemDark = darkModeListener.matches;
+      darkModeListener.on('change', (result: mediaquery.MediaQueryResult) => {
+        this.isSystemDark = result.matches;
+      });
+    } catch (err) {
+      console.error('Failed to watch system dark mode:', err);
     }
   }
 
@@ -169,34 +194,49 @@ struct Index {
     }
   }
 
-  private async isWindowMaximized(): Promise<boolean> {
-    const win = this.cachedWindow ?? await this.getMainWindow();
-    if (!win) return false;
-    try {
-      const props = win.getWindowProperties();
-      // When windowRect equals the full screen work area, treat as maximized.
-      // This is a heuristic; HarmonyOS does not expose a direct isMaximized API.
-      return false;
-    } catch (err) {
-      return false;
-    }
-  }
+  // True while the window is maximized or full-screen. Synced from
+  // window.getWindowStatus() + the 'windowStatusDidChange' event, so the
+  // custom window border hides itself (macOS-style: no frame stroke when
+  // maximized) and the green traffic light never desyncs from reality.
+  @State isMaximized: boolean = false;
+  // System dark-mode flag tracked via mediaquery. Needed because the app-level
+  // color mode (dshColorMode) may override the system mode, in which case only
+  // the app mode decides the border color; in 'system' mode we follow this.
+  @State isSystemDark: boolean = false;
 
-  private isMaximizedWindow: boolean = false;
+  // Measured on HarmonyOS PC (MateBook Pro, OpenHarmony 7): the system clips
+  // window corners at ~25.6px with densityPixels 1.6125, i.e. 16vp. The custom
+  // border reuses this radius so its arc follows the system corner exactly.
+  private readonly WINDOW_CORNER_RADIUS_VP = 16;
+  private readonly WINDOW_BORDER_WIDTH_VP = 2;
 
   private async toggleMaximizeWindow(): Promise<void> {
     const win = this.cachedWindow ?? await this.getMainWindow();
     if (!win) return;
     try {
-      if (this.isMaximizedWindow) {
+      // Ask the window manager instead of trusting a local flag: the flag
+      // desynced whenever the window was (un)maximized by other means
+      // (system gesture, double-click, restore), which made the green
+      // traffic light appear to "occasionally do nothing".
+      const status = win.getWindowStatus();
+      if (status === window.WindowStatusType.MAXIMIZE || status === window.WindowStatusType.FULL_SCREEN) {
         await win.recover();
-        this.isMaximizedWindow = false;
       } else {
         await win.maximize();
-        this.isMaximizedWindow = true;
       }
+      this.updateMaximizedState(win);
     } catch (err) {
       console.error('Failed to toggle maximize/recover:', err);
+    }
+  }
+
+  private updateMaximizedState(win: window.Window): void {
+    try {
+      const status = win.getWindowStatus();
+      this.isMaximized =
+        status === window.WindowStatusType.MAXIMIZE || status === window.WindowStatusType.FULL_SCREEN;
+    } catch (err) {
+      console.error('Failed to read window status:', err);
     }
   }
 
@@ -574,6 +614,20 @@ struct Index {
         const win = this.cachedWindow;
         if (!win || event.touches.length === 0) return;
         if (event.type === TouchType.Down) {
+          // While maximized/full-screen the window manager rejects moveWindowTo
+          // (CheckAndModifyWindowRect failed), which made this drag strip feel
+          // dead. Restore to floating first; the next drag moves normally.
+          try {
+            const status = win.getWindowStatus();
+            if (status === window.WindowStatusType.MAXIMIZE || status === window.WindowStatusType.FULL_SCREEN) {
+              win.recover().catch((err: Error) => {
+                console.error('Failed to recover before drag:', err);
+              });
+              return;
+            }
+          } catch (err) {
+            console.error('Failed to read window status for drag:', err);
+          }
           const p = win.getWindowProperties();
           this.winStartLeft = p.windowRect.left;
           this.winStartTop = p.windowRect.top;
@@ -659,7 +713,13 @@ struct Index {
         name: 'dshNative',
         methodList: ['setSidebarCollapsed'],
         asyncMethodList: ['minimize', 'hide', 'close', 'zoomIn', 'zoomOut', 'resetZoom', 'toggleColorMode', 'toggleMaximize'],
-        controller: this.webController
+        controller: this.webController,
+        // Hardening: only the local dsh web origin may call the bridge
+        // (schema per ArkWeb doc "Invoking Application Functions on the
+        // Frontend Page"; object-level grant covers all methods).
+        permission: '{"javascriptProxyPermission":{"urlPermissionList":[' +
+          '{"scheme":"http","host":"127.0.0.1","port":"3080","path":""}' +
+          ']}}'
       })
       .onPageEnd((event) => {
         this.hideSessionLogButton();
@@ -719,13 +779,63 @@ struct Index {
     }
   }
 
+  // Custom window frame stroke, drawn above all content (including the Web
+  // surface) but transparent to touches. The system window border is a 1px
+  // hairline with poor corner anti-aliasing (HarmonyOS PC offers no window
+  // border API — only shadow switches — so like macOS NSBorderlessWindowMask
+  // and Windows DWM client-drawn frames, we stroke our own inside edge).
+  // Hidden while maximized/full-screen, matching macOS/Windows chrome.
+  // Effective dark flag: app override (light/dark) wins, otherwise follow the
+  // system mode tracked by mediaquery. Never use dark-qualified $r resources
+  // for this — they follow the system mode only (see aboutToAppear note).
+  private isEffectivelyDark(): boolean {
+    if (this.colorMode === this.COLOR_MODE_LIGHT) {
+      return false;
+    }
+    if (this.colorMode === this.COLOR_MODE_DARK) {
+      return true;
+    }
+    return this.isSystemDark;
+  }
+
+  // Border color follows the EFFECTIVE app color mode (app override first,
+  // then system), never a dark-qualified resource (see aboutToAppear note).
+  private windowBorderColor(): string {
+    return this.isEffectivelyDark() ? 'rgba(255,255,255,0.24)' : 'rgba(0,0,0,0.25)';
+  }
+
+  // Underlay painted behind the Web surface. While resizing, the compositor
+  // shows this color in the not-yet-repainted strip along the growing edge
+  // (ArkWeb repaints asynchronously — engine-level behavior, the system
+  // browser shows the same lag). Matching the web theme background makes the
+  // "blank" flash effectively invisible. Dark value sampled from the dsh web
+  // dark theme (content #353638 / sidebar #0D0D0E, midpoint picked).
+  private webUnderlayColor(): string {
+    return this.isEffectivelyDark() ? '#232426' : '#FFFFFF';
+  }
+
+  @Builder
+  WindowBorderOverlay() {
+    Column()
+      .width('100%')
+      .height('100%')
+      .border({
+        width: this.isMaximized ? 0 : this.WINDOW_BORDER_WIDTH_VP,
+        color: this.windowBorderColor(),
+        radius: this.isMaximized ? 0 : this.WINDOW_CORNER_RADIUS_VP
+      })
+      .hitTestBehavior(HitTestMode.None)
+  }
+
   build() {
     Stack({ alignContent: Alignment.Top }) {
       this.Content()
       this.InvisibleDragZone()
       this.WindowControls()
+      this.WindowBorderOverlay()
     }
     .width('100%')
     .height('100%')
+    .backgroundColor(this.webUnderlayColor())
   }
 }

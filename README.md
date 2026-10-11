@@ -32,14 +32,20 @@ HAP 是纯 Web 客户端；Host（`dsh web`）跑在系统侧，与 Electron 版
 - 无标题栏（`setWindowDecorVisible(false)` + `setWindowTitleButtonVisible(false,false,false)`），左上角自绘 macOS 风格红/黄/绿窗口控制按钮
 - hover 时显示 `×` / `−` / 绿色系统 SymbolGlyph；左侧侧边栏收起时按钮同步隐藏
 - 顶部拖拽热区高度 28vp，右侧排除 220vp；双击热区使用 `window.maximize()` / `window.recover()` 最大化/还原
+- **自绘窗口描边**：窗口态下沿系统圆角（16vp）自绘 2vp 描边（深浅色自适应、最大化/全屏自动隐藏）——系统 1px 细边无 API 可调，故自绘覆盖
+- **主题色衬底**：根容器铺与 Web 主题同色的衬底，掩盖 ArkWeb 调整窗口大小时的异步重绘空白
+- 最大化状态以 `window.getWindowStatus()` 为准（绿灯/拖拽/描边共用），不再用本地标志位
 - 隐藏 dsh web 的 session-log 按钮，避免与系统窗口按钮重叠
-- 跟随系统深浅色，支持手动循环切换并持久化
+- 跟随系统深浅色，支持手动循环切换并持久化；描边/衬底颜色按应用有效颜色模式计算
 - 窗口大小 / 位置持久化（`preferences`）
 - dsh web 未启动时的中文错误页 + 重试
-- JS Bridge：网页可通过 `window.dshNative` 控制窗口与缩放
+- JS Bridge：网页可通过 `window.dshNative` 控制窗口与缩放（**URL 白名单**：仅 `127.0.0.1:3080` 可调）
 - 桌面快捷键（注入到网页）
 - 自定义右键菜单
 - 后台通知（相当于托盘，点击可重新唤起）
+- **长时任务常驻**：`MODE_TASK_KEEPING` 长时任务（PC/2in1 免 ACL）让应用进程与 ArkTS 桥在关窗/后台后常驻
+- **服务卡片**：桌面三种尺寸卡片展示 DSH 会话状态（宿主侧 `updateCard` 推送）
+- **DSH ↔ ArkTS 桥**：21+ 动作（窗口感知/截图/自身窗口控制/通知/卡片/快捷栏等），详见 `bridge/README.md`
 
 ### 快捷键
 
@@ -66,9 +72,13 @@ HAP 是纯 Web 客户端；Host（`dsh web`）跑在系统侧，与 Electron 版
 
 输出：`entry/build/default/outputs/default/entry-default-signed.hap`
 
-> **签名**：本仓库的 `build-profile.json5` 不含任何签名配置。首次构建前，在
-> DevEco Studio 中配置签名（`File > Project Structure > Signing Configs`），或手动在
-> `build-profile.json5` 的 `signingConfigs` 中填入你自己的证书。**切勿把签名密码提交到仓库。**
+> **签名**：本仓库的 `build-profile.json5` 不含任何签名配置（`signingConfigs` 已清空）。
+> 首次构建前，在 DevEco Studio 中配置签名（`File > Project Structure > Signing Configs`），
+> 或手动在 `build-profile.json5` 的 `signingConfigs` 中填入你自己的证书。
+> **切勿把签名材料提交到仓库**：证书/私钥/profile 请放在已被 `.gitignore` 忽略的
+> `key/` 目录；本机若已有配置，可存为 `key/build-profile.local.json5`，构建前
+> `cp key/build-profile.local.json5 build-profile.json5` 临时恢复，构建后
+> `git checkout -- build-profile.json5` 还原为净化版。
 
 ## 运行
 

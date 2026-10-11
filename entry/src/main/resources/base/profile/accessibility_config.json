@@ -1,0 +1,7 @@
+{
+  "accessibilityCapabilities": [
+    "retrieve",
+    "gesture"
+  ],
+  "accessibilityCapabilityRationale": "DshDesktop 的无障碍服务让本机 AI 助手（dsh）能够读取当前界面上的控件文本，并按你的指令点击/滑动控件来完成操作。它不会在未经你开启时运行，也不会上传屏幕内容。"
+}

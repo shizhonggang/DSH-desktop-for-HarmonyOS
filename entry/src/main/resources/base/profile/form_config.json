@@ -1,0 +1,67 @@
+{
+  "forms": [
+    {
+      "name": "dsh_card_mini",
+      "displayName": "$string:form_mini_display_name",
+      "description": "$string:form_mini_desc",
+      "src": "./ets/pages/DshCard.ets",
+      "uiSyntax": "arkts",
+      "window": {
+        "designWidth": 720,
+        "autoDesignWidth": true
+      },
+      "colorMode": "auto",
+      "isDynamic": true,
+      "isDefault": true,
+      "updateEnabled": true,
+      "scheduledUpdateTime": "10:30",
+      "updateDuration": 1,
+      "supportDimensions": [
+        "2*2"
+      ],
+      "defaultDimension": "2*2"
+    },
+    {
+      "name": "dsh_card_wide",
+      "displayName": "$string:form_wide_display_name",
+      "description": "$string:form_wide_desc",
+      "src": "./ets/pages/DshCardWide.ets",
+      "uiSyntax": "arkts",
+      "window": {
+        "designWidth": 720,
+        "autoDesignWidth": true
+      },
+      "colorMode": "auto",
+      "isDynamic": true,
+      "isDefault": false,
+      "updateEnabled": true,
+      "scheduledUpdateTime": "10:30",
+      "updateDuration": 1,
+      "supportDimensions": [
+        "2*4"
+      ],
+      "defaultDimension": "2*4"
+    },
+    {
+      "name": "dsh_card_large",
+      "displayName": "$string:form_large_display_name",
+      "description": "$string:form_large_desc",
+      "src": "./ets/pages/DshCardLarge.ets",
+      "uiSyntax": "arkts",
+      "window": {
+        "designWidth": 720,
+        "autoDesignWidth": true
+      },
+      "colorMode": "auto",
+      "isDynamic": true,
+      "isDefault": false,
+      "updateEnabled": true,
+      "scheduledUpdateTime": "10:30",
+      "updateDuration": 1,
+      "supportDimensions": [
+        "4*4"
+      ],
+      "defaultDimension": "4*4"
+    }
+  ]
+}
