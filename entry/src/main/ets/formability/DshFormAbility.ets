@@ -16,9 +16,12 @@
 import { FormExtensionAbility, formBindingData, formInfo, formProvider } from '@kit.FormKit';
 import { Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { preferences } from '@kit.ArkData';
 
 const DOMAIN = 0x0000;
 const TAG = 'DshFormAbility';
+const FORM_IDS_PREF = 'dsh_form_ids';
+const FORM_IDS_KEY = 'formIds';
 
 /**
  * Service card (服务卡片) lifecycle handler.
@@ -33,8 +36,75 @@ const TAG = 'DshFormAbility';
  * form lifecycle and data channel.
  */
 export default class DshFormAbility extends FormExtensionAbility {
+  /**
+   * 本应用已创建卡片的 formId 列表。
+   *
+   * 为什么要自己记：`getPublishedRunningFormInfos()` 是设备级枚举，三方调用报
+   * 16500100；`getFormsInfo()` 返回的 FormInfo **没有 formId 字段**（formId 只在
+   * RunningFormInfo 上，且本机运行时实测也不携带）。零权限且可靠的做法就是在
+   * onAddForm 里把系统给的 formId 记下来（参数键 formInfo.FormParam.IDENTITY_KEY）。
+   *
+   * 2026-10-11 修正：纯内存静态表有个致命伤——FormExtensionAbility 跑在独立的
+   * form 进程，且应用重启后表被清空而桌面卡片还在（updateCard 变成 cards:0）。
+   * 现在双写：内存 + preferences（应用沙箱内跨进程共享，form 进程写、主进程读）。
+   */
+  private static formIds: string[] = [];
+
+  static knownFormIds(): string[] {
+    return DshFormAbility.formIds;
+  }
+
+  /** 主进程（BridgeAgent）启动时调用：从 preferences 恢复历史 formId。 */
+  static restoreFormIds(context: Context): void {
+    try {
+      const pref = preferences.getPreferencesSync(context, { name: FORM_IDS_PREF });
+      const saved = pref.getSync(FORM_IDS_KEY, '[]') as string;
+      const arr: string[] = JSON.parse(saved);
+      for (const id of arr) {
+        if (typeof id === 'string' && id.length > 0 && DshFormAbility.formIds.indexOf(id) < 0) {
+          DshFormAbility.formIds.push(id);
+        }
+      }
+      hilog.info(DOMAIN, TAG, 'restored %{public}d formIds from preferences', arr.length);
+    } catch (err) {
+      hilog.warn(DOMAIN, TAG, 'restoreFormIds failed: %{public}s', JSON.stringify(err));
+    }
+  }
+
+  private static persistFormIds(context: Context): void {
+    try {
+      const pref = preferences.getPreferencesSync(context, { name: FORM_IDS_PREF });
+      pref.putSync(FORM_IDS_KEY, JSON.stringify(DshFormAbility.formIds));
+      pref.flushSync();
+    } catch (err) {
+      hilog.warn(DOMAIN, TAG, 'persistFormIds failed: %{public}s', JSON.stringify(err));
+    }
+  }
+
+  private static rememberFormId(formId: string): void {
+    if (formId.length === 0) {
+      return;
+    }
+    if (DshFormAbility.formIds.indexOf(formId) < 0) {
+      DshFormAbility.formIds.push(formId);
+    }
+  }
+
   onAddForm(want: Want): formBindingData.FormBindingData {
     hilog.info(DOMAIN, TAG, 'onAddForm called');
+    try {
+      const params = want.parameters;
+      if (params !== undefined) {
+        const id = params[formInfo.FormParam.IDENTITY_KEY];
+        if (typeof id === 'string') {
+          DshFormAbility.rememberFormId(id as string);
+          DshFormAbility.persistFormIds(this.context);
+          hilog.info(DOMAIN, TAG, 'onAddForm tracked formId %{public}s', id as string);
+        }
+      }
+    } catch (err) {
+      hilog.warn(DOMAIN, TAG, 'onAddForm track failed: %{public}s', JSON.stringify(err));
+    }
     // Default card data — will be overwritten by the first updateCardData call.
     const data = new Map<string, Object>();
     // Single-task fields (mini/wide cards)
@@ -82,6 +152,11 @@ export default class DshFormAbility extends FormExtensionAbility {
 
   onRemoveForm(formId: string): void {
     hilog.info(DOMAIN, TAG, 'onRemoveForm: %{public}s', formId);
+    const idx = DshFormAbility.formIds.indexOf(formId);
+    if (idx >= 0) {
+      DshFormAbility.formIds.splice(idx, 1);
+      DshFormAbility.persistFormIds(this.context);
+    }
   }
 
   onAcquireFormState(want: Want): formInfo.FormState {

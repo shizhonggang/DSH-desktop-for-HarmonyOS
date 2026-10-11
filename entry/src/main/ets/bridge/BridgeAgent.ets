@@ -65,6 +65,8 @@ import { localChatModel } from '@kit.DataAugmentationKit';
 import { textProcessing } from '@kit.NaturalLanguageKit';
 import { textToSpeech } from '@kit.CoreSpeechKit';
 import { intelligence, distributedKVStore } from '@kit.ArkData';
+import { systemShare } from '@kit.ShareKit';
+import { abilityConnectionManager } from '@kit.DistributedServiceKit';
 import { emitter } from '@kit.BasicServicesKit';
 import { Callback } from '@ohos.base';
 import abilityAccessCtrl, { Permissions } from '@ohos.abilityAccessCtrl';
@@ -1384,6 +1386,24 @@ export class BridgeAgent {
     }
     if (action === 'wsServerStatus') {
       return this.wsServerStatus();
+    }
+    if (action === 'shareShow') {
+      return this.shareShow(args);
+    }
+    if (action === 'acsCreate') {
+      return this.acsCreate(args);
+    }
+    if (action === 'acsConnect') {
+      return this.acsConnect(args);
+    }
+    if (action === 'acsSend') {
+      return this.acsSend(args);
+    }
+    if (action === 'acsDestroy') {
+      return this.acsDestroy(args);
+    }
+    if (action === 'acsStatus') {
+      return this.acsStatus();
     }
     if (action === 'getPermissionStatus') {
       return this.getPermissionStatus();
@@ -3092,6 +3112,149 @@ export class BridgeAgent {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // 系统分享（systemShare，零权限）—— DSH 产出物一键进系统分享面板
+  // ---------------------------------------------------------------------------
+
+  /** 打开系统分享面板。args: { text, title? } —— 需应用在前台（UI 操作）。 */
+  private async shareShow(args: Record<string, Object>): Promise<string> {
+    const text = this.stringArg(args, 'text');
+    if (text.length === 0) {
+      return '{"ok":false,"error":"text is required"}';
+    }
+    const titleRaw = this.stringArg(args, 'title');
+    const title = titleRaw.length > 0 ? titleRaw : '来自 DSH';
+    try {
+      const record: systemShare.SharedRecord = {
+        utd: 'general.plain-text',
+        content: text,
+        title: title
+      };
+      const data: systemShare.SharedData = new systemShare.SharedData(record);
+      const controller: systemShare.ShareController = new systemShare.ShareController(data);
+      const options: systemShare.ShareControllerOptions = {
+        selectionMode: systemShare.SelectionMode.SINGLE,
+        previewMode: systemShare.SharePreviewMode.DEFAULT
+      };
+      await controller.show(this.abilityContext, options);
+      return '{"ok":true,"records":' + data.getRecords().length.toString() +
+        ',"chars":' + text.length.toString() + '}';
+    } catch (err) {
+      return '{"ok":false,"error":"' + this.esc(this.text(err)) + '"}';
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 跨设备 Ability 会话（abilityConnectionManager）—— 绕开 TCP 可达性问题的协同通道
+  // ---------------------------------------------------------------------------
+
+  private acsSessionIds: number[] = [];
+
+  /**
+   * 建会话（不连接）。args: { deviceId, bundleName?, moduleName?, abilityName?, serviceName? }
+   * 对端（手机）必须实现 DistributedExtensionAbility 且 onCollaborate 返回 ACCEPT。
+   */
+  private acsCreate(args: Record<string, Object>): Promise<string> {
+    const deviceId = this.stringArg(args, 'deviceId');
+    if (deviceId.length === 0) {
+      return Promise.resolve('{"ok":false,"error":"deviceId is required (from listDistributedDevices)"}');
+    }
+    const bundleRaw = this.stringArg(args, 'bundleName');
+    const moduleRaw = this.stringArg(args, 'moduleName');
+    const abilityRaw = this.stringArg(args, 'abilityName');
+    const serviceRaw = this.stringArg(args, 'serviceName');
+    const serviceName = serviceRaw.length > 0 ? serviceRaw : 'dsh_session';
+    try {
+      const peer: abilityConnectionManager.PeerInfo = {
+        deviceId: deviceId,
+        bundleName: bundleRaw.length > 0 ? bundleRaw : 'com.example.dshdesktop',
+        moduleName: moduleRaw.length > 0 ? moduleRaw : 'entry',
+        abilityName: abilityRaw.length > 0 ? abilityRaw : 'DshDistributedAbility'
+      };
+      const options: abilityConnectionManager.ConnectOptions = { needSendData: true };
+      const sessionId: number = abilityConnectionManager.createAbilityConnectionSession(
+        serviceName, this.abilityContext, peer, options);
+      if (this.acsSessionIds.indexOf(sessionId) < 0) {
+        this.acsSessionIds.push(sessionId);
+      }
+      abilityConnectionManager.on('connect', sessionId, (info: abilityConnectionManager.EventCallbackInfo) => {
+        this.postBridgeEvent('acsConnect', '{"sessionId":' + sessionId.toString() + '}');
+      });
+      abilityConnectionManager.on('disconnect', sessionId, (info: abilityConnectionManager.EventCallbackInfo) => {
+        this.postBridgeEvent('acsDisconnect', '{"sessionId":' + sessionId.toString() +
+          ',"reason":' + (info.reason !== undefined ? info.reason.toString() : '-1') + '}');
+      });
+      abilityConnectionManager.on('receiveMessage', sessionId, (info: abilityConnectionManager.EventCallbackInfo) => {
+        this.postBridgeEvent('acsMessage', JSON.stringify({ sessionId: sessionId, msg: info.msg ?? '' }));
+      });
+      abilityConnectionManager.on('receiveData', sessionId, (info: abilityConnectionManager.EventCallbackInfo) => {
+        const len = info.data !== undefined ? info.data.byteLength : 0;
+        this.postBridgeEvent('acsData', '{"sessionId":' + sessionId.toString() + ',"bytes":' + len.toString() + '}');
+      });
+      return Promise.resolve('{"ok":true,"sessionId":' + sessionId.toString() +
+        ',"serviceName":"' + this.esc(serviceName) + '"' +
+        ',"peer":{"deviceId":"' + this.esc(deviceId) + '"' +
+        ',"bundleName":"' + this.esc(peer.bundleName) + '"' +
+        ',"abilityName":"' + this.esc(peer.abilityName) + '"}}');
+    } catch (err) {
+      return Promise.resolve('{"ok":false,"error":"' + this.esc(this.text(err)) + '"}');
+    }
+  }
+
+  /** 发起连接。args: { sessionId } */
+  private async acsConnect(args: Record<string, Object>): Promise<string> {
+    const sessionId = this.numberArg(args, 'sessionId');
+    if (sessionId <= 0) {
+      return '{"ok":false,"error":"sessionId is required"}';
+    }
+    try {
+      const result: abilityConnectionManager.ConnectResult = await abilityConnectionManager.connect(sessionId);
+      return '{"ok":true,"sessionId":' + sessionId.toString() +
+        ',"isConnected":' + (result.isConnected ? 'true' : 'false') +
+        ',"errorCode":' + (result.errorCode !== undefined ? result.errorCode.toString() : '-1') +
+        ',"reason":"' + this.esc(result.reason ?? '') + '"}';
+    } catch (err) {
+      return '{"ok":false,"error":"' + this.esc(this.text(err)) + '"}';
+    }
+  }
+
+  /** 发一条文本消息。args: { sessionId, text } */
+  private async acsSend(args: Record<string, Object>): Promise<string> {
+    const sessionId = this.numberArg(args, 'sessionId');
+    const text = this.stringArg(args, 'text');
+    try {
+      await abilityConnectionManager.sendMessage(sessionId, text);
+      return '{"ok":true,"sessionId":' + sessionId.toString() + ',"chars":' + text.length.toString() + '}';
+    } catch (err) {
+      return '{"ok":false,"error":"' + this.esc(this.text(err)) + '"}';
+    }
+  }
+
+  /** 销毁会话。args: { sessionId } */
+  private acsDestroy(args: Record<string, Object>): Promise<string> {
+    const sessionId = this.numberArg(args, 'sessionId');
+    try {
+      abilityConnectionManager.destroyAbilityConnectionSession(sessionId);
+      const idx = this.acsSessionIds.indexOf(sessionId);
+      if (idx >= 0) {
+        this.acsSessionIds.splice(idx, 1);
+      }
+      return Promise.resolve('{"ok":true,"sessionId":' + sessionId.toString() + '}');
+    } catch (err) {
+      return Promise.resolve('{"ok":false,"error":"' + this.esc(this.text(err)) + '"}');
+    }
+  }
+
+  private acsStatus(): Promise<string> {
+    const ids: string[] = [];
+    for (const id of this.acsSessionIds) {
+      ids.push(id.toString());
+    }
+    return Promise.resolve('{"ok":true,"sessions":[' + ids.join(',') + ']' +
+      ',"count":' + this.acsSessionIds.length.toString() +
+      ',"syscap":' + (canIUse('SystemCapability.DistributedSched.AppCollaboration') ? 'true' : 'false') + '}');
+  }
+
   /** Minimal standard-alphabet base64 encoder (ArkTS has no Buffer). */
   private base64(bytes: Uint8Array): string {
     const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -3198,15 +3361,47 @@ export class BridgeAgent {
     // with 16500100 "Failed to obtain the configuration information");
     // getFormsInfo() lists this app's own widgets with zero extra permission
     // (FormInfo.formId since API 20).
-    try {
-      const forms: formInfo.FormInfo[] = await formProvider.getFormsInfo();
-      for (const info of forms) {
-        DshFormAbility.updateCardData(this.abilityContext, info.formId, data);
+    // FormInfo 没有 formId（formId 只在 RunningFormInfo 上），而设备级枚举
+    // getPublishedRunningFormInfos() 三方调用报 16500100 —— 所以用
+    // DshFormAbility 在 onAddForm 里记下的 formId 列表（零权限、可靠）。
+    // 先尝试从 preferences 恢复（form 进程写、主进程读，应用重启不丢）。
+    DshFormAbility.restoreFormIds(this.abilityContext);
+    const ids: string[] = DshFormAbility.knownFormIds();
+    if (ids.length === 0) {
+      // knownFormIds 是进程内注册表：应用重启后被清空，但桌面已钉的卡片还在
+      // → 回退到零权限的 getFormsInfo()（2026-10-11 17:33 经此路径实测更新
+      // 3 张卡片）。注意 FormInfo 的类型声明里没有 formId（只有
+      // RunningFormInfo 有），但运行时对象实际携带 → 用显式子接口取。
+      interface FormInfoWithId extends formInfo.FormInfo {
+        formId?: string;
       }
-      return '{"updated":true,"cards":' + forms.length.toString() + '}';
-    } catch (err) {
-      throw new Error('updateCard: ' + this.text(err));
+      try {
+        const forms = (await formProvider.getFormsInfo()) as FormInfoWithId[];
+        let n = 0;
+        for (const f of forms) {
+          if (typeof f.formId === 'string' && f.formId.length > 0) {
+            DshFormAbility.updateCardData(this.abilityContext, f.formId, data);
+            n++;
+          }
+        }
+        if (n > 0) {
+          return '{"updated":true,"cards":' + n.toString() + ',"via":"getFormsInfo-fallback"}';
+        }
+      } catch (fallbackErr) {
+        hilog.error(DOMAIN, 'testTag', 'updateCard getFormsInfo fallback failed: %{public}s', JSON.stringify(fallbackErr));
+      }
+      return '{"updated":false,"cards":0,"reason":"no card has been added yet (onAddForm not called)"}';
     }
+    let updated = 0;
+    for (const id of ids) {
+      try {
+        DshFormAbility.updateCardData(this.abilityContext, id, data);
+        updated++;
+      } catch (err) {
+        hilog.warn(DOMAIN, TAG, 'updateCardData(%{public}s) failed: %{public}s', id, this.text(err));
+      }
+    }
+    return '{"updated":true,"cards":' + updated.toString() + '}';
   }
 
   /**
