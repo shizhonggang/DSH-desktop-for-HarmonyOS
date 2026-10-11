@@ -15,7 +15,7 @@
 
 import { webview } from '@kit.ArkWeb';
 import { http } from '@kit.NetworkKit';
-import { window, display } from '@kit.ArkUI';
+import { window, display, mediaquery } from '@kit.ArkUI';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 
@@ -96,6 +96,20 @@ struct Index {
       this.densityPixels = display.getDefaultDisplaySync().densityPixels;
     } catch (err) {
       console.error('Failed to read display density:', err);
+    }
+    // Track system dark mode for the window border when dshColorMode=system.
+    // Do NOT use a dark-qualified $r resource for the border: resource
+    // qualifiers follow the SYSTEM color mode, while the Web content follows
+    // the APP override — when the two disagree (e.g. system dark + app light)
+    // a resource-based border paints white-on-white and becomes invisible.
+    try {
+      const darkModeListener = mediaquery.matchMediaSync('(dark-mode: true)');
+      this.isSystemDark = darkModeListener.matches;
+      darkModeListener.on('change', (result: mediaquery.MediaQueryResult) => {
+        this.isSystemDark = result.matches;
+      });
+    } catch (err) {
+      console.error('Failed to watch system dark mode:', err);
     }
   }
 
@@ -185,6 +199,10 @@ struct Index {
   // custom window border hides itself (macOS-style: no frame stroke when
   // maximized) and the green traffic light never desyncs from reality.
   @State isMaximized: boolean = false;
+  // System dark-mode flag tracked via mediaquery. Needed because the app-level
+  // color mode (dshColorMode) may override the system mode, in which case only
+  // the app mode decides the border color; in 'system' mode we follow this.
+  @State isSystemDark: boolean = false;
 
   // Measured on HarmonyOS PC (MateBook Pro, OpenHarmony 7): the system clips
   // window corners at ~25.6px with densityPixels 1.6125, i.e. 16vp. The custom
@@ -761,6 +779,20 @@ struct Index {
   // border API — only shadow switches — so like macOS NSBorderlessWindowMask
   // and Windows DWM client-drawn frames, we stroke our own inside edge).
   // Hidden while maximized/full-screen, matching macOS/Windows chrome.
+  // Border color follows the EFFECTIVE app color mode (app override first,
+  // then system), never a dark-qualified resource (see aboutToAppear note).
+  private windowBorderColor(): string {
+    let dark: boolean;
+    if (this.colorMode === this.COLOR_MODE_LIGHT) {
+      dark = false;
+    } else if (this.colorMode === this.COLOR_MODE_DARK) {
+      dark = true;
+    } else {
+      dark = this.isSystemDark;
+    }
+    return dark ? 'rgba(255,255,255,0.24)' : 'rgba(0,0,0,0.25)';
+  }
+
   @Builder
   WindowBorderOverlay() {
     Column()
@@ -768,7 +800,7 @@ struct Index {
       .height('100%')
       .border({
         width: this.isMaximized ? 0 : this.WINDOW_BORDER_WIDTH_VP,
-        color: $r('app.color.window_border'),
+        color: this.windowBorderColor(),
         radius: this.isMaximized ? 0 : this.WINDOW_CORNER_RADIUS_VP
       })
       .hitTestBehavior(HitTestMode.None)
