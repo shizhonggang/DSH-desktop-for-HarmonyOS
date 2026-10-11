@@ -39,6 +39,7 @@ import { http, webSocket } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { notificationManager } from '@kit.NotificationKit';
 import { formProvider, formInfo } from '@kit.FormKit';
+import { preferences } from '@kit.ArkData';
 import pasteboard from '@ohos.pasteboard';
 import calendarManager from '@ohos.calendarManager';
 import commonEventManager from '@ohos.commonEventManager';
@@ -75,6 +76,13 @@ import DshFormAbility from '../formability/DshFormAbility';
 
 const DOMAIN = 0x0000;
 const TAG = 'DshBridge';
+
+/** 状态栏图标的持久化配置（dsh_statusbar prefs 的 'config' 键）。 */
+interface StatusBarSavedConfig {
+  title: string;
+  hoverTips: string;
+  menu: string;
+}
 
 const HTTP_OK = 200;
 /** Delay before the next poll once the previous one has settled. */
@@ -2351,6 +2359,7 @@ export class BridgeAgent {
       this.registerStatusBarEvents();
       statusBarManager.addToStatusBar(this.abilityContext, item);
       this.statusBarAdded = true;
+      this.persistStatusBarConfig(title, hover, menuSpec);
       // API 26: device-state gate. When this is false the system accepts the
       // call but shows NOTHING (guide: "如果不支持，则调用addToStatusBar后，界面上无效果").
       let stateSupported = false;
@@ -2376,9 +2385,58 @@ export class BridgeAgent {
     try {
       statusBarManager.removeFromStatusBar(this.abilityContext);
       this.statusBarAdded = false;
+      this.clearStatusBarConfig();
       return Promise.resolve('{"ok":true,"added":false}');
     } catch (err) {
       return Promise.resolve('{"ok":false,"error":"' + this.esc(this.text(err)) + '"}');
+    }
+  }
+
+  // —— 状态栏图标配置持久化（2026-10-11 持久化审查修复）——
+  // addToStatusBar 的注册是运行时状态，应用重启即丢（实测重启后 added:false）。
+  // 与 formId 注册表同族问题：add 时把 {title, hoverTips, menu} 写 preferences，
+  // EntryAbility 在 loadContent 完成后调 restoreStatusBar() 自动补挂。
+
+  /** 上次 statusBarAdd 的配置（title/hoverTips/menu），重启后据此补挂。 */
+  private persistStatusBarConfig(title: string, hoverTips: string, menu: string): void {
+    try {
+      const pref = preferences.getPreferencesSync(this.abilityContext, { name: 'dsh_statusbar' });
+      pref.putSync('config', JSON.stringify({ title: title, hoverTips: hoverTips, menu: menu } as StatusBarSavedConfig));
+      pref.flushSync();
+    } catch (err) {
+      hilog.warn(DOMAIN, TAG, 'persistStatusBarConfig failed: %{public}s', this.text(err));
+    }
+  }
+
+  private clearStatusBarConfig(): void {
+    try {
+      const pref = preferences.getPreferencesSync(this.abilityContext, { name: 'dsh_statusbar' });
+      pref.deleteSync('config');
+      pref.flushSync();
+    } catch (err) {
+      hilog.warn(DOMAIN, TAG, 'clearStatusBarConfig failed: %{public}s', this.text(err));
+    }
+  }
+
+  /**
+   * 应用启动后补挂状态栏图标（若用户此前 add 过且未 remove）。
+   * 由 EntryAbility 在 loadContent 完成后调用（addToStatusBar 需要前台窗口）。
+   */
+  async restoreStatusBar(): Promise<void> {
+    if (this.statusBarAdded) return;
+    try {
+      const pref = preferences.getPreferencesSync(this.abilityContext, { name: 'dsh_statusbar' });
+      const saved = pref.getSync('config', '') as string;
+      if (!saved) return;
+      const cfg: StatusBarSavedConfig = JSON.parse(saved);
+      const args: Record<string, Object> = {};
+      args['title'] = cfg.title;
+      args['hoverTips'] = cfg.hoverTips;
+      args['menu'] = cfg.menu;
+      const result = await this.statusBarAdd(args);
+      hilog.info(DOMAIN, TAG, 'restoreStatusBar: %{public}s', result);
+    } catch (err) {
+      hilog.warn(DOMAIN, TAG, 'restoreStatusBar failed: %{public}s', this.text(err));
     }
   }
 

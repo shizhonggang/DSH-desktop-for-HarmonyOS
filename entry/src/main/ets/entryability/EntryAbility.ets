@@ -275,6 +275,14 @@ export default class EntryAbility extends UIAbility {
       // Restore previous window position/size.
       this.restoreWindowRect(mainWindow);
 
+      // 状态栏图标重启补挂（用户此前 add 过且未 remove 的话）：addToStatusBar
+      // 的注册是运行时状态、重启即丢；配置在 statusBarAdd 时已写 preferences。
+      if (this.bridge !== undefined) {
+        this.bridge.restoreStatusBar().catch((err: Object) => {
+          hilog.warn(DOMAIN, 'testTag', 'restoreStatusBar failed: %{public}s', JSON.stringify(err));
+        });
+      }
+
       // Hide the system title bar (frameless, like Electron's hidden title bar).
       try {
         mainWindow.setWindowDecorVisible(false);
