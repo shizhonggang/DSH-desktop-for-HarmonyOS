@@ -779,18 +779,33 @@ struct Index {
   // border API — only shadow switches — so like macOS NSBorderlessWindowMask
   // and Windows DWM client-drawn frames, we stroke our own inside edge).
   // Hidden while maximized/full-screen, matching macOS/Windows chrome.
+  // Effective dark flag: app override (light/dark) wins, otherwise follow the
+  // system mode tracked by mediaquery. Never use dark-qualified $r resources
+  // for this — they follow the system mode only (see aboutToAppear note).
+  private isEffectivelyDark(): boolean {
+    if (this.colorMode === this.COLOR_MODE_LIGHT) {
+      return false;
+    }
+    if (this.colorMode === this.COLOR_MODE_DARK) {
+      return true;
+    }
+    return this.isSystemDark;
+  }
+
   // Border color follows the EFFECTIVE app color mode (app override first,
   // then system), never a dark-qualified resource (see aboutToAppear note).
   private windowBorderColor(): string {
-    let dark: boolean;
-    if (this.colorMode === this.COLOR_MODE_LIGHT) {
-      dark = false;
-    } else if (this.colorMode === this.COLOR_MODE_DARK) {
-      dark = true;
-    } else {
-      dark = this.isSystemDark;
-    }
-    return dark ? 'rgba(255,255,255,0.24)' : 'rgba(0,0,0,0.25)';
+    return this.isEffectivelyDark() ? 'rgba(255,255,255,0.24)' : 'rgba(0,0,0,0.25)';
+  }
+
+  // Underlay painted behind the Web surface. While resizing, the compositor
+  // shows this color in the not-yet-repainted strip along the growing edge
+  // (ArkWeb repaints asynchronously — engine-level behavior, the system
+  // browser shows the same lag). Matching the web theme background makes the
+  // "blank" flash effectively invisible. Dark value sampled from the dsh web
+  // dark theme (content #353638 / sidebar #0D0D0E, midpoint picked).
+  private webUnderlayColor(): string {
+    return this.isEffectivelyDark() ? '#232426' : '#FFFFFF';
   }
 
   @Builder
@@ -815,5 +830,6 @@ struct Index {
     }
     .width('100%')
     .height('100%')
+    .backgroundColor(this.webUnderlayColor())
   }
 }
