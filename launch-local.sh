@@ -58,6 +58,11 @@ if [ -z "$TOKEN" ]; then
 fi
 
 # 3) 启动 HAP（把 token 作为 want parameter 传给 EntryAbility）
+# 先确保 bridge-server 在跑（HAP 内的 BridgeAgent 启动后会立即长轮询 3131；
+# start-bridge.sh 幂等，活着直接返回，失败静默不阻塞）。
+BRIDGE_DIR="$(cd "$(dirname "$0")" && pwd)/bridge"
+[ -f "$BRIDGE_DIR/start-bridge.sh" ] && sh "$BRIDGE_DIR/start-bridge.sh" start || true
+
 if [ -n "$TOKEN" ]; then
   echo "[aa] 启动 $BUNDLE_NAME/$ABILITY_NAME（携带 dsh_token）"
   aa start -b "$BUNDLE_NAME" -a "$ABILITY_NAME" --es dsh_token "$TOKEN" 2>&1 || {
