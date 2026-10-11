@@ -58,18 +58,28 @@ import { SystemEventWatcher } from './SystemEventWatcher';
 import window from '@ohos.window';
 import display from '@ohos.display';
 import image from '@ohos.multimedia.image';
-import fileIo from '@ohos.file.fs';
+import { media } from '@kit.MediaKit';
+import { audio } from '@kit.AudioKit';
+import { appManager } from '@kit.AbilityKit';
+import fileIo, { WatchEvent, WatchEventListener, Watcher } from '@ohos.file.fs';
 import { util } from '@kit.ArkTS';
 import { textRecognition } from '@kit.CoreVisionKit';
 import { statusBarManager, quickBarManager } from '@kit.DeskTopExtensionKit';
 import { localChatModel } from '@kit.DataAugmentationKit';
 import { textProcessing } from '@kit.NaturalLanguageKit';
+import { NativeInput } from './NativeInput';
 import { textToSpeech } from '@kit.CoreSpeechKit';
 import { intelligence, distributedKVStore } from '@kit.ArkData';
 import { systemShare } from '@kit.ShareKit';
 import { abilityConnectionManager } from '@kit.DistributedServiceKit';
 import { emitter } from '@kit.BasicServicesKit';
 import { Callback } from '@ohos.base';
+import { inputEventClient, inputConsumer } from '@kit.InputKit';
+import print from '@ohos.print';
+import { componentSnapshot } from '@kit.ArkUI';
+import { settings } from '@kit.BasicServicesKit';
+import { pointer, inputDevice } from '@kit.InputKit';
+import { batteryInfo } from '@kit.BasicServicesKit';
 import abilityAccessCtrl, { Permissions } from '@ohos.abilityAccessCtrl';
 import { Driver, ON, Component } from '@ohos.UiTest';
 import DshFormAbility from '../formability/DshFormAbility';
@@ -794,10 +804,16 @@ export class BridgeAgent {
     try {
       const req = http.createHttp();
       const url = 'http://127.0.0.1:3131/event';
+      // bridge-server /event expects {event, data} (2026-10-12 fix: this used to
+      // send {type, payload}, which landed as empty events in ui-events.json).
+      let data: Object = payload;
+      try {
+        data = JSON.parse(payload) as Object;
+      } catch { /* keep raw string */ }
       req.request(url, {
         method: http.RequestMethod.POST,
         header: { 'Content-Type': 'application/json' },
-        extraData: JSON.stringify({ type: eventType, payload: payload }),
+        extraData: JSON.stringify({ event: eventType, data: data }),
         readTimeout: POST_READ_TIMEOUT_MS
       }).then(() => {
         req.destroy();
@@ -1286,6 +1302,108 @@ export class BridgeAgent {
     }
     if (action === 'uiTestProbe') {
       return this.uiTestProbe();
+    }
+    if (action === 'aclProbe') {
+      return this.aclProbe(args);
+    }
+    if (action === 'screenRecordProbe') {
+      return this.screenRecordProbe();
+    }
+    if (action === 'volume') {
+      return this.volume(args);
+    }
+    if (action === 'killProcess') {
+      return this.killProcess(args);
+    }
+    if (action === 'windowLayoutAll') {
+      return this.windowLayoutAll(args);
+    }
+    if (action === 'clipboardWatch') {
+      return this.clipboardWatch(args);
+    }
+    if (action === 'clipboardRich') {
+      return this.clipboardRich();
+    }
+    if (action === 'hotkeyWatch') {
+      return this.hotkeyWatch(args);
+    }
+    if (action === 'fsWatch') {
+      return this.fsWatch(args);
+    }
+    if (action === 'printFile') {
+      return this.printFile(args);
+    }
+    if (action === 'offscreenRender') {
+      return this.offscreenRender(args);
+    }
+    if (action === 'deviceStatus') {
+      return this.deviceStatus();
+    }
+    if (action === 'pointerVisible') {
+      return this.pointerVisible(args);
+    }
+    if (action === 'settingsRead') {
+      return this.settingsRead(args);
+    }
+    // ===== NDK-only 能力（libdshnative.so napi；session-98608bdc 追加，勿动）=====
+    if (action === 'ndkPointerLocation') {
+      return this.ndkResult(NativeInput.getPointerLocation());
+    }
+    if (action === 'ndkRequestInjection') {
+      return this.ndkResult(NativeInput.requestInjection());
+    }
+    if (action === 'ndkInjectionStatus') {
+      return this.ndkResult(NativeInput.queryInjectionStatus());
+    }
+    if (action === 'ndkInjectKey') {
+      return this.ndkResult(NativeInput.injectKey(args['keyCode'] as number, args['action'] as number));
+    }
+    if (action === 'ndkInjectMouse') {
+      return this.ndkInjectMouse(args);
+    }
+    if (action === 'ndkInjectTouch') {
+      return this.ndkResult(NativeInput.injectTouch(args['action'] as number, args['x'] as number,
+        args['y'] as number, (args['fingerId'] as number) ?? 0));
+    }
+    if (action === 'ndkFunctionKeyState') {
+      return this.ndkResult(NativeInput.getFunctionKeyState(args['keyCode'] as number));
+    }
+    if (action === 'ndkMaxTouchPoints') {
+      return this.ndkResult(NativeInput.queryMaxTouchPoints());
+    }
+    if (action === 'ndkCursorLock') {
+      return this.ndkResult(NativeInput.lockCursor(args['windowId'] as number,
+        (args['followMovement'] as boolean) ?? true));
+    }
+    if (action === 'ndkCursorUnlock') {
+      return this.ndkResult(NativeInput.unlockCursor(args['windowId'] as number));
+    }
+    // ===== NDK v2 能力（napi_extras.cpp；session-43e17adf 追加，勿动）=====
+    if (action === 'ndkIntervalSinceInput') {
+      const ms: number = NativeInput.getIntervalSinceLastInput();
+      return Promise.resolve(JSON.stringify({ ok: ms >= 0, ms: ms }));
+    }
+    if (action === 'ndkSetPointerStyle') {
+      return this.ndkResult(NativeInput.setPointerStyle(args['windowId'] as number, args['style'] as number));
+    }
+    if (action === 'ndkGetPointerStyle') {
+      return this.ndkResult(NativeInput.getPointerStyle(args['windowId'] as number));
+    }
+    if (action === 'ndkSetPointerVisible') {
+      const visible: boolean = args['visible'] !== false;
+      return this.ndkResult(NativeInput.setPointerVisible(visible));
+    }
+    if (action === 'ndkMouseWatch') {
+      return this.ndkMouseWatch(args);
+    }
+    if (action === 'ndkTraceBegin') {
+      return this.ndkResult(NativeInput.traceBegin(this.stringArg(args, 'name')));
+    }
+    if (action === 'ndkTraceEnd') {
+      return this.ndkResult(NativeInput.traceEnd());
+    }
+    if (action === 'ndkScreenshot') {
+      return this.ndkScreenshot(args);
     }
     if (action === 'watchProbe') {
       return this.watchProbe(args);
@@ -1795,6 +1913,490 @@ export class BridgeAgent {
   }
 
   /**
+   * Volume read/write (2026-10-12, knowledge/14 #2): AudioManager set/getVolume
+   * need ACCESS_NOTIFICATION_POLICY (normal, already declared). Not affected by
+   * the trial profile expiry. args: {op:'get'|'set', type?:'MEDIA'|..., volume?:int}
+   */
+  private async volume(args: Record<string, Object>): Promise<string> {
+    const am = audio.getAudioManager();
+    const typeName: string = this.stringArg(args, 'type') || 'MEDIA';
+    let vt: audio.AudioVolumeType;
+    switch (typeName) {
+      case 'VOICE_CALL': vt = audio.AudioVolumeType.VOICE_CALL; break;
+      case 'RINGTONE': vt = audio.AudioVolumeType.RINGTONE; break;
+      case 'ALARM': vt = audio.AudioVolumeType.ALARM; break;
+      case 'ACCESSIBILITY': vt = audio.AudioVolumeType.ACCESSIBILITY; break;
+      case 'VOICE_ASSISTANT': vt = audio.AudioVolumeType.VOICE_ASSISTANT; break;
+      case 'MEDIA': vt = audio.AudioVolumeType.MEDIA; break;
+      default: throw new Error('volume: unknown type "' + typeName + '"');
+    }
+    const op: string = this.stringArg(args, 'op') || 'get';
+    if (op === 'set') {
+      const v: number = this.numberArg(args, 'volume');
+      const maxV: number = await am.getMaxVolume(vt);
+      if (v < 0 || v > maxV) {
+        throw new Error('volume: value ' + v.toString() + ' out of range 0..' + maxV.toString());
+      }
+      await am.setVolume(vt, v);
+    }
+    const cur: number = await am.getVolume(vt);
+    const max: number = await am.getMaxVolume(vt);
+    const min: number = await am.getMinVolume(vt);
+    return '{"type":"' + typeName + '","volume":' + cur.toString() +
+      ',"min":' + min.toString() + ',"max":' + max.toString() + '}';
+  }
+
+  /**
+   * Kill another app's processes (2026-10-12, knowledge/14 #3): needs
+   * CLEAN_BACKGROUND_PROCESSES (normal, already declared).
+   * args: {bundleName, clearPageStack?:bool}
+   */
+  private async killProcess(args: Record<string, Object>): Promise<string> {
+    const bundle: string = this.stringArg(args, 'bundleName');
+    if (bundle.length === 0) {
+      throw new Error('killProcess: "bundleName" is required');
+    }
+    if (bundle === this.abilityContext.abilityInfo.bundleName) {
+      throw new Error('killProcess: refusing to kill self');
+    }
+    const clearStack: boolean = args['clearPageStack'] === true;
+    await appManager.killProcessesByBundleName(bundle, clearStack);
+    return '{"killed":"' + this.esc(bundle) + '","clearPageStack":' + (clearStack ? 'true' : 'false') + '}';
+  }
+
+  /**
+   * knowledge/14 #5: cross-app window list + geometry + z-order via
+   * window.getAllWindowLayoutInfo (API 26, NO permission). The CGWindowList /
+   * EnumWindows counterpart. args: {displayId?, excludeSystemWindows?}
+   */
+  private async windowLayoutAll(args: Record<string, Object>): Promise<string> {
+    const didRaw = this.numberArg(args, 'displayId');
+    const did: number = didRaw >= 0 ? didRaw : 0;
+    const opt: window.WindowInfoOptions = {};
+    if (args['excludeSystemWindows'] === true) {
+      opt.excludeSystemWindows = true;
+    }
+    const list = await window.getAllWindowLayoutInfo(did, opt);
+    let out: string = '{"count":' + list.length.toString() + ',"windows":[';
+    let first = true;
+    for (const w of list) {
+      const r = w.windowRect;
+      const alpha: number = w.windowAlpha !== undefined ? w.windowAlpha : -1;
+      out += (first ? '' : ',') + '{"rect":[' + r.left.toString() + ',' + r.top.toString() +
+        ',' + r.width.toString() + ',' + r.height.toString() + '],"alpha":' + alpha.toString() + '}';
+      first = false;
+    }
+    return out + ']}';
+  }
+
+  /**
+   * knowledge/14 #8a: clipboard change notification. pasteboard.on('update')
+   * (no permission to WATCH; READ_PASTEBOARD only needed to read content).
+   * Events are pushed to the node side as type 'clipboard_update'.
+   * args: {enable:bool}
+   */
+  private clipboardWatch(args: Record<string, Object>): Promise<string> {
+    const pb = pasteboard.getSystemPasteboard();
+    const enable: boolean = args['enable'] !== false;
+    if (enable) {
+      if (this.clipboardWatchCb !== undefined) {
+        return Promise.resolve('{"watching":true,"note":"already"}');
+      }
+      const cb = (): void => {
+        this.postEvent('clipboard_update', '{}');
+      };
+      pb.on('update', cb);
+      this.clipboardWatchCb = cb;
+      return Promise.resolve('{"watching":true}');
+    }
+    if (this.clipboardWatchCb !== undefined) {
+      pb.off('update', this.clipboardWatchCb);
+      this.clipboardWatchCb = undefined;
+    }
+    return Promise.resolve('{"watching":false}');
+  }
+
+  /**
+   * knowledge/14 #8b: rich clipboard — mime types + per-type content preview.
+   * Needs READ_PASTEBOARD (trial ACL, granted).
+   */
+  private async clipboardRich(): Promise<string> {
+    const pb = pasteboard.getSystemPasteboard();
+    const has = await pb.hasData();
+    if (!has) {
+      return '{"hasData":false}';
+    }
+    const data: pasteboard.PasteData = await pb.getData();
+    const mimes: Array<string> = data.getMimeTypes();
+    let out: string = '{"hasData":true,"mimeTypes":[';
+    for (let i = 0; i < mimes.length; i++) {
+      out += (i === 0 ? '' : ',') + '"' + this.esc(mimes[i]) + '"';
+    }
+    out += ']';
+    const count: number = data.getRecordCount();
+    out += ',"records":' + count.toString();
+    if (count > 0) {
+      const rec: pasteboard.PasteDataRecord = data.getRecordAt(0);
+      out += ',"plainText":"' + this.esc(rec.toPlainText().slice(0, 60)) + '"';
+      const html: string = rec.htmlText;
+      out += ',"hasHtml":' + (html !== undefined && html.length > 0 ? 'true' : 'false');
+      const uri: string = rec.uri;
+      out += ',"hasUri":' + (uri !== undefined && uri.length > 0 ? 'true' : 'false');
+      out += ',"hasWant":' + (rec.want !== undefined ? 'true' : 'false');
+    }
+    return out + '}';
+  }
+
+  /**
+   * knowledge/14 #6: register an app-global hotkey (inputConsumer, API 14,
+   * NO permission). Fires as 'hotkey' events on the node side. System-occupied
+   * combos fail with 4200002, already-subscribed with 4200003.
+   * args: {preKeys:[num], finalKey:num, enable?:bool}
+   */
+  private hotkeyWatch(args: Record<string, Object>): Promise<string> {
+    const enable: boolean = args['enable'] !== false;
+    if (!enable) {
+      if (this.hotkeyWatchCb !== undefined && this.hotkeyWatchOpts !== undefined) {
+        inputConsumer.off('hotkeyChange', this.hotkeyWatchOpts, this.hotkeyWatchCb);
+        this.hotkeyWatchCb = undefined;
+        this.hotkeyWatchOpts = undefined;
+      }
+      return Promise.resolve('{"watching":false}');
+    }
+    const pre: Array<number> = args['preKeys'] as Array<number>;
+    const fin: number = this.numberArg(args, 'finalKey');
+    if (pre === undefined || fin <= 0) {
+      throw new Error('hotkeyWatch: need preKeys:[num,...] and finalKey:num (HarmonyOS KeyCode)');
+    }
+    const opts: inputConsumer.HotkeyOptions = { preKeys: pre, finalKey: fin, isRepeat: false };
+    const cb: Callback<inputConsumer.HotkeyOptions> = (hk: inputConsumer.HotkeyOptions) => {
+      this.postEvent('hotkey', '{"finalKey":' + hk.finalKey.toString() + '}');
+    };
+    try {
+      inputConsumer.on('hotkeyChange', opts, cb);
+      this.hotkeyWatchCb = cb;
+      this.hotkeyWatchOpts = opts;
+      return Promise.resolve('{"watching":true,"finalKey":' + fin.toString() + '}');
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      return Promise.resolve('{"watching":false,"error":"' + this.esc(m.slice(0, 120)) + '"}');
+    }
+  }
+
+  /**
+   * knowledge/14 #7: inotify-style file watcher via fileIo.createWatcher
+   * (no permission; NOT recursive). Events arrive as 'fs_event' on node side.
+   * events bitmask uses inotify values (CREATE 0x100 / DELETE 0x200 /
+   * MODIFY 0x2 / MOVED_FROM 0x40 / MOVED_TO 0x80 / ATTRIB 0x4).
+   * args: {path, events?:number, enable?:bool}
+   */
+  private fsWatch(args: Record<string, Object>): Promise<string> {
+    const enable: boolean = args['enable'] !== false;
+    if (!enable) {
+      if (this.fsWatcher !== undefined) {
+        this.fsWatcher.stop();
+        this.fsWatcher = undefined;
+      }
+      return Promise.resolve('{"watching":false}');
+    }
+    const path: string = this.stringArg(args, 'path');
+    if (path.length === 0) {
+      throw new Error('fsWatch: "path" is required');
+    }
+    const evRaw = this.numberArg(args, 'events');
+    const events: number = evRaw > 0 ? evRaw : 0x3C6;
+    const listener: WatchEventListener = (ev: WatchEvent) => {
+      this.postEvent('fs_event', '{"fileName":"' + this.esc(ev.fileName) +
+        '","event":' + ev.event.toString() + '}');
+    };
+    try {
+      if (this.fsWatcher !== undefined) {
+        this.fsWatcher.stop();
+      }
+      this.fsWatcher = fileIo.createWatcher(path, events, listener);
+      this.fsWatcher.start();
+      return Promise.resolve('{"watching":true,"path":"' + this.esc(path) + '"}');
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      return Promise.resolve('{"watching":false,"error":"' + this.esc(m.slice(0, 120)) + '"}');
+    }
+  }
+
+  /**
+   * knowledge/14 #13: print files via the system print service
+   * (@ohos.print, no permission). Opens the system print UI/preview.
+   * args: {path} — absolute file path readable by this app.
+   */
+  private async printFile(args: Record<string, Object>): Promise<string> {
+    const path: string = this.stringArg(args, 'path');
+    if (path.length === 0) {
+      throw new Error('printFile: "path" is required');
+    }
+    try {
+      const task = await print.print([path], this.abilityContext);
+      task.on('succeed', () => { this.postEvent('print_done', '{"state":"succeed"}'); });
+      task.on('block', () => { this.postEvent('print_done', '{"state":"blocked"}'); });
+      return '{"printed":true,"note":"system print UI shown; events arrive as print_done"}';
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      return '{"printed":false,"error":"' + this.esc(m.slice(0, 120)) + '"}';
+    }
+  }
+
+  /**
+   * CC msg-71 C: offscreen/headless UI render. NOTE: module-level
+   * componentSnapshot.createFromBuilder crashes in a plain agent context
+   * (observeComponentCreation2 undefined) — must go through the window's
+   * UIContext.getComponentSnapshot(). args: {text?} → PNG in filesDir.
+   */
+  private async offscreenRender(args: Record<string, Object>): Promise<string> {
+    const text: string = this.stringArg(args, 'text') || 'DSH offscreen render';
+    const path: string = this.abilityContext.filesDir + '/offscreen-' + Date.now().toString() + '.png';
+    const builder: CustomBuilder = (): void => { DshOffscreenCard(text); };
+    const win = await window.getLastWindow(this.abilityContext);
+    const pixmap: image.PixelMap =
+      await win.getUIContext().getComponentSnapshot().createFromBuilder(builder, 100);
+    const packer = image.createImagePacker();
+    const file = fileIo.openSync(path,
+      fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+    await packer.packToFile(pixmap, file.fd, { format: 'image/png', quality: 95 });
+    fileIo.closeSync(file);
+    const st: fileIo.Stat = fileIo.statSync(path);
+    return '{"ok":true,"bytes":' + st.size.toString() + ',"path":"' + this.esc(path) + '"}';
+  }
+
+  /**
+   * knowledge/14 #7 + CC msg-71: zero-permission device status snapshot
+   * (battery / network bearer / input idle).
+   */
+  private async deviceStatus(): Promise<string> {
+    let out: string = '{"batterySOC":' + batteryInfo.batterySOC.toString();
+    out += ',"charging":' + (batteryInfo.chargingStatus !== batteryInfo.BatteryChargeState.NONE ? 'true' : 'false');
+    try {
+      const net = await connection.getDefaultNet();
+      const caps = await connection.getNetCapabilities(net);
+      let types: string = '';
+      for (const b of caps.bearerTypes) {
+        types += (types.length > 0 ? ',' : '') + b.toString();
+      }
+      out += ',"netBearers":"' + types + '"';
+    } catch { out += ',"netBearers":"unknown"'; }
+    try {
+      const idle: number = await inputDevice.getIntervalSinceLastInput();
+      out += ',"idleMs":' + idle.toString();
+    } catch { /* ignore */ }
+    return out + '}';
+  }
+
+  /**
+   * CC msg-70 #15: pointer visibility (录屏/演示时隐藏光标), no permission.
+   * args: {show:bool}
+   */
+  private async pointerVisible(args: Record<string, Object>): Promise<string> {
+    const show: boolean = args['show'] !== false;
+    await pointer.setPointerVisible(show);
+    return '{"pointerVisible":' + (show ? 'true' : 'false') + '}';
+  }
+
+  // ===== NDK-only 辅助（session-98608bdc 追加）=====
+
+  /** 把 NativeResult 包装成 dispatch 约定的 JSON 字符串 */
+  private ndkResult(r: Object): Promise<string> {
+    return Promise.resolve(JSON.stringify(r));
+  }
+
+  /**
+   * NDK 鼠标注入（免 ACL，需先 ndkRequestInjection 授权一次）。
+   * args: {op:'move'|'button'|'axis', x, y, button?, down?, axisType?, axisValue?}
+   */
+  private ndkInjectMouse(args: Record<string, Object>): Promise<string> {
+    const op: string = this.stringArg(args, 'op');
+    const x: number = this.numberArg(args, 'x');
+    const y: number = this.numberArg(args, 'y');
+    if (op === 'move') {
+      return this.ndkResult(NativeInput.injectMouseMove(x, y));
+    }
+    if (op === 'button') {
+      const button: number = args['button'] === undefined ? 0 : this.numberArg(args, 'button');
+      const down: boolean = args['down'] !== false;
+      return this.ndkResult(NativeInput.injectMouseButton(x, y, button, down));
+    }
+    if (op === 'axis') {
+      const axisType: number = args['axisType'] === undefined ? 0 : this.numberArg(args, 'axisType');
+      const axisValue: number = args['axisValue'] === undefined ? 1 : this.numberArg(args, 'axisValue');
+      return this.ndkResult(NativeInput.injectMouseAxis(x, y, axisType, axisValue));
+    }
+    throw new Error('ndkInjectMouse: op must be move|button|axis');
+  }
+
+  /**
+   * NDK 全局鼠标事件监听（INPUT_MONITORING，试用 ACL 期内可用；事件经 postEvent 落盘）。
+   * args: {op:'start'|'stop'} → 事件流 'mouse_event' {action,x,y,button,windowId}
+   */
+  private ndkMouseWatch(args: Record<string, Object>): Promise<string> {
+    const op: string = this.stringArg(args, 'op');
+    if (op === 'start') {
+      const r = NativeInput.startMouseMonitor((e) => {
+        this.postEvent('mouse_event', JSON.stringify({
+          action: e.action, x: e.x, y: e.y, button: e.button, windowId: e.windowId
+        }));
+      });
+      return this.ndkResult(r);
+    }
+    if (op === 'stop') {
+      return this.ndkResult(NativeInput.stopMouseMonitor());
+    }
+    throw new Error('ndkMouseWatch: op must be start|stop');
+  }
+
+  /**
+   * NDK 进程内单帧截屏（OH_AVScreenCapture，RGBA8888）。
+   * 替代「ArkTS截图→沙箱文件→fetchFile base64」三跳链：直接在 native 层拿 buffer。
+   * args: {width?, height?}（缺省 3840×2160）→ RGBA 原始数据写 filesDir，宿主用 fetchFile 取回。
+   */
+  private async ndkScreenshot(args: Record<string, Object>): Promise<string> {
+    const width: number = args['width'] === undefined ? 3840 : this.numberArg(args, 'width');
+    const height: number = args['height'] === undefined ? 2160 : this.numberArg(args, 'height');
+    const shot = await NativeInput.captureScreenshot(width, height);
+    if (shot.code !== 0 || shot.data === undefined) {
+      return JSON.stringify({ ok: false, code: shot.code, width: shot.width, height: shot.height });
+    }
+    const path: string = this.abilityContext.filesDir + '/ndk-capture-' + Date.now().toString() + '.rgba';
+    const file = fileIo.openSync(path, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
+    fileIo.writeSync(file.fd, shot.data);
+    fileIo.closeSync(file);
+    return JSON.stringify({
+      ok: true, code: shot.code, width: shot.width, height: shot.height,
+      stride: shot.stride, size: shot.size, format: 'RGBA8888', path: path
+    });
+  }
+
+  /**
+   * knowledge/14 #14: read a system setting (read is permission-free).
+   * args: {name} — raw key, or constant path like display.SCREEN_BRIGHTNESS_STATUS.
+   */
+  private async settingsRead(args: Record<string, Object>): Promise<string> {
+    const name: string = this.stringArg(args, 'name');
+    if (name.length === 0) {
+      throw new Error('settingsRead: "name" is required');
+    }
+    let key: string = name;
+    if (name === 'display.SCREEN_BRIGHTNESS_STATUS') {
+      key = settings.display.SCREEN_BRIGHTNESS_STATUS;
+    } else if (name === 'display.FONT_SCALE') {
+      key = settings.display.FONT_SCALE;
+    } else if (name === 'display.AUTO_SCREEN_BRIGHTNESS') {
+      key = settings.display.AUTO_SCREEN_BRIGHTNESS;
+    }
+    try {
+      const v: string = await settings.getValue(this.abilityContext, key);
+      return '{"name":"' + this.esc(name) + '","key":"' + this.esc(key) + '","value":"' + this.esc(v) + '"}';
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      return '{"name":"' + this.esc(name) + '","error":"' + this.esc(m.slice(0, 120)) + '"}';
+    }
+  }
+
+  /**
+   * AVScreenCaptureRecorder probe (2026-10-12, CC msg-69): the media module has
+   * a programmatic screen-recording API with NO @permission on any method —
+   * if third-party runtime allows it, this replaces the Meta+Shift+R shortcut.
+   * Records 3s into filesDir and reports the byte count.
+   */
+  private async screenRecordProbe(): Promise<string> {
+    const path: string = this.abilityContext.filesDir + '/acl-probe-recording.mp4';
+    let recorder: media.AVScreenCaptureRecorder | null = null;
+    let opened: fileIo.File | null = null;
+    try {
+      recorder = await media.createAVScreenCaptureRecorder();
+      if (recorder === null) {
+        return '{"ok":false,"stage":"create","error":"createAVScreenCaptureRecorder returned null"}';
+      }
+      opened = fileIo.openSync(path,
+        fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+      const config: media.AVScreenCaptureRecordConfig = { fd: opened.fd };
+      await recorder.init(config);
+      await recorder.startRecording();
+      await new Promise<void>((resolve) => { setTimeout(resolve, 3000); });
+      await recorder.stopRecording();
+      fileIo.closeSync(opened);
+      opened = null;
+      const st: fileIo.Stat = fileIo.statSync(path);
+      return '{"ok":true,"bytes":' + st.size.toString() +
+        ',"note":"programmatic recording works — shortcut path replaceable"}';
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      return '{"ok":false,"error":"' + this.esc(m.slice(0, 200)) + '"}';
+    } finally {
+      if (opened !== null) {
+        try { fileIo.closeSync(opened); } catch { /* ignore */ }
+      }
+      if (recorder !== null) {
+        try { await recorder.release(); } catch { /* ignore */ }
+      }
+    }
+  }
+
+  /**
+   * Trial-profile ACL probe (2026-10-11): runtime-verifies the 7 trial ACLs.
+   * verifyAccessToken gives the grant state without side effects; inputMonitor
+   * on/off and getAbilityInfo are functional probes for the API paths.
+   */
+  private async aclProbe(args: Record<string, Object>): Promise<string> {
+    const perms: Array<string> = [
+      'ohos.permission.CUSTOM_SCREEN_RECORDING',
+      'ohos.permission.CONTROL_DEVICE',
+      'ohos.permission.INTERCEPT_INPUT_EVENT',
+      'ohos.permission.INPUT_MONITORING',
+      'ohos.permission.MANAGE_RECENT_SNAPSHOT',
+      'ohos.permission.READ_PASTEBOARD',
+      'ohos.permission.GET_ABILITY_INFO'
+    ];
+    const atManager = abilityAccessCtrl.createAtManager();
+    const selfInfo = await bundleManager.getBundleInfoForSelf(
+      bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION);
+    const tokenId: number = selfInfo.appInfo.accessTokenId;
+    let out: string = '{"grants":{';
+    let first: boolean = true;
+    for (const p of perms) {
+      let st: string = '"unknown"';
+      try {
+        const g: abilityAccessCtrl.GrantStatus = await atManager.verifyAccessToken(tokenId, p);
+        // 注意：token=granted 只代表持有权限，不代表系统有对应 API 可用
+        // （反例：INPUT_MONITORING granted 但本 SDK 无 inputMonitor 模块）
+        st = g === 0 ? '"granted"' : '"denied"';
+      } catch (e) {
+        const m = e instanceof Error ? e.message : String(e);
+        st = m.includes('not') && m.includes('request') ? '"not-declared"' : '"error:' + this.esc(m.slice(0, 60)) + '"';
+      }
+      out += (first ? '' : ',') + '"' + p.slice(16) + '":' + st;
+      first = false;
+    }
+    out += '}';
+    // functional probe (OPT-IN, has side effect: really injects an 'a' key):
+    // only runs when called as aclProbe {"inject":true}. Default = grants only.
+    const doInject: boolean = args['inject'] === true;
+    if (doInject) {
+      try {
+        const kc = await inputEventClient.createKeyboardController();
+        await kc.pressKey(2017);
+        await kc.releaseKey(2017);
+        out += ',"injectKey":"ok"';
+      } catch (e) {
+        const m = e instanceof Error ? e.message : String(e);
+        out += m.includes('201') || m.includes('Permission') ?
+          ',"injectKey":"denied"' :
+          ',"injectKey":"error:' + this.esc(m.slice(0, 100)) + '"';
+      }
+    }
+    // note: this SDK only exposes getAbilityInfo(uri, flags) — the
+    // (bundleName, abilityName) overload that exercises GET_ABILITY_INFO does
+    // not exist here, so grant state above is the probe for that permission.
+    out += '}';
+    return out;
+  }
+
+  /**
    * Probe whether the in-process UiTest API (@ohos.UiTest) is usable.
    * If it works, DSH can drive the whole machine without hdc.
    */
@@ -2261,17 +2863,27 @@ export class BridgeAgent {
     try {
       const st: fileIo.Stat = fileIo.statSync(p);
       const size = st.size;
-      if (size > maxBytes) {
-        throw new Error('fetchFile: file is ' + size.toString() + ' bytes, over the ' +
-          maxBytes.toString() + ' byte cap; raise "maxBytes" if this is intended');
+      // 分片拉取：agent→bridge 的 POST 超过 ~1MB 会静默失败（实测 700KB 过 1.2MB 挂），
+      // 大文件用 offset/length 分片（建议 ≤512KB/片），宿主侧拼接。
+      const rawOffset = this.numberArg(args, 'offset');
+      const start = rawOffset > 0 && rawOffset < size ? rawOffset : 0;
+      let want = size - start;
+      const rawLen = this.numberArg(args, 'length');
+      if (rawLen > 0 && rawLen < want) {
+        want = rawLen;
+      }
+      if (want > maxBytes) {
+        throw new Error('fetchFile: slice is ' + want.toString() + ' bytes, over the ' +
+          maxBytes.toString() + ' byte cap; use offset/length chunks');
       }
       const file: fileIo.File = fileIo.openSync(p, fileIo.OpenMode.READ_ONLY);
-      const buf = new ArrayBuffer(size);
-      const read = fileIo.readSync(file.fd, buf);
+      const buf = new ArrayBuffer(want);
+      const read = fileIo.readSync(file.fd, buf, { offset: start, length: want });
       fileIo.closeSync(file);
       const bytes = new Uint8Array(buf.slice(0, read));
       const b64 = this.base64(bytes);
-      return '{"ok":true,"path":"' + this.esc(p) + '","size":' + read.toString() +
+      return '{"ok":true,"path":"' + this.esc(p) + '","size":' + size.toString() +
+        ',"offset":' + start.toString() + ',"read":' + read.toString() +
         ',"base64":"' + b64 + '"}';
     } catch (err) {
       throw new Error('fetchFile: ' + this.text(err));
@@ -2285,6 +2897,10 @@ export class BridgeAgent {
   private statusBarAdded = false;
   private statusBarLeftClicks = 0;
   private statusBarMenuClicks: string[] = [];
+  private clipboardWatchCb: (() => void) | undefined = undefined;
+  private hotkeyWatchCb: Callback<inputConsumer.HotkeyOptions> | undefined = undefined;
+  private hotkeyWatchOpts: inputConsumer.HotkeyOptions | undefined = undefined;
+  private fsWatcher: Watcher | undefined = undefined;
   private statusBarIconCb: Callback<emitter.EventData> | undefined = undefined;
   private statusBarMenuCb: Callback<emitter.EventData> | undefined = undefined;
 
@@ -2935,12 +3551,14 @@ export class BridgeAgent {
         encrypt: false,
         backup: false,
         autoSync: true,
-        kvStoreType: distributedKVStore.KVStoreType.DEVICE_COLLABORATION,
-        securityLevel: distributedKVStore.SecurityLevel.S1
+        // 2026-10-11 对齐 citemate 实证可用配置（同机同步成功）：SINGLE_VERSION+S3。
+        // 原 DEVICE_COLLABORATION+S1 在本机实测触发 IsTrust 拒绝；改后 A/B 验证。
+        kvStoreType: distributedKVStore.KVStoreType.SINGLE_VERSION,
+        securityLevel: distributedKVStore.SecurityLevel.S3
       };
       this.kvStore = await this.kvManager.getKVStore<distributedKVStore.SingleKVStore>(storeId, options);
       this.kvStoreId = storeId;
-      return '{"ok":true,"storeId":"' + this.esc(storeId) + '","type":"DEVICE_COLLABORATION"}';
+      return '{"ok":true,"storeId":"' + this.esc(storeId) + '","type":"SINGLE_VERSION","securityLevel":"S3"}';
     } catch (err) {
       return '{"ok":false,"error":"' + this.esc(this.text(err)) + '"}';
     }
@@ -3315,20 +3933,9 @@ export class BridgeAgent {
 
   /** Minimal standard-alphabet base64 encoder (ArkTS has no Buffer). */
   private base64(bytes: Uint8Array): string {
-    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-    let out = '';
-    for (let i = 0; i < bytes.length; i += 3) {
-      const b0 = bytes[i];
-      const hasB1 = i + 1 < bytes.length;
-      const hasB2 = i + 2 < bytes.length;
-      const b1 = hasB1 ? bytes[i + 1] : 0;
-      const b2 = hasB2 ? bytes[i + 2] : 0;
-      out += alphabet.charAt(b0 >> 2);
-      out += alphabet.charAt(((b0 & 0x03) << 4) | (b1 >> 4));
-      out += hasB1 ? alphabet.charAt(((b1 & 0x0f) << 2) | (b2 >> 6)) : '=';
-      out += hasB2 ? alphabet.charAt(b2 & 0x3f) : '=';
-    }
-    return out;
+    // 手搓逐字节拼接在 8MB 文件上会卡死 agent 主线程（O(n²) 实测复现）；
+    // util.Base64Helper 是原生实现，8MB 毫秒级。
+    return new util.Base64Helper().encodeToStringSync(bytes);
   }
 
   /**
@@ -3682,4 +4289,21 @@ export class BridgeAgent {
     }
     return JSON.stringify(value);
   }
+}
+
+/** Offscreen-render demo builder for the offscreenRender bridge action. */
+@Builder
+function DshOffscreenCard(text: string) {
+  Column() {
+    Text(text)
+      .fontSize(32)
+      .fontColor(Color.White)
+      .margin(12)
+    Text(new Date().toLocaleString())
+      .fontSize(18)
+      .fontColor(Color.Gray)
+  }
+  .padding(24)
+  .backgroundColor('#FF1A73E8')
+  .borderRadius(16)
 }

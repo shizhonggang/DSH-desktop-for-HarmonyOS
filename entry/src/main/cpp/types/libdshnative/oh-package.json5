@@ -1,0 +1,6 @@
+{
+  "name": "libdshnative.so",
+  "types": "./index.d.ts",
+  "version": "1.0.0",
+  "description": "DSH native 模块：NDK-only 自动化能力（输入注入/光标/指针）"
+}

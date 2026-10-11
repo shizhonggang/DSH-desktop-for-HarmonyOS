@@ -338,7 +338,8 @@ function startServer () {
     if (req.method === 'POST' && url.pathname === '/result') {
       let body
       try {
-        body = JSON.parse(await readBody(req) || '{}')
+        // fetchFile 等 action 的 base64 负载可超 1MB（全屏 RGBA ≈ 11MB），放宽到 64MB
+        body = JSON.parse(await readBody(req, 64 * 1024 * 1024) || '{}')
       } catch (error) {
         json(res, 400, { ok: false, error: { code: 'bad_request', message: String(error?.message ?? error) } })
         return
