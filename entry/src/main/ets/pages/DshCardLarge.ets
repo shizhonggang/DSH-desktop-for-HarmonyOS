@@ -96,31 +96,39 @@ struct DshCardLarge {
         .strokeWidth(0.5)
         .margin({ top: 4, bottom: 4 })
 
-      // Row 1: rounds / steps / tok/s
+      // Row 1: rounds / steps / tok/s（tokRate 为空时连分隔点一起隐藏）
       Row({ space: 4 }) {
         Text(`${this.rounds}轮 ${this.steps}步`)
           .fontSize(10)
           .fontColor('#A0A0A0')
-        Text('·')
-          .fontSize(10)
-          .fontColor('#606060')
-        Text(this.tokRate)
-          .fontSize(10)
-          .fontColor('#A0A0A0')
+        if (this.tokRate !== '') {
+          Text('·')
+            .fontSize(10)
+            .fontColor('#606060')
+          Text(this.tokRate)
+            .fontSize(10)
+            .fontColor('#A0A0A0')
+        }
       }
       .width('100%')
 
       // Row 2: tokens / cache / last refresh / refresh button / progress ring
       Row({ space: 4 }) {
-        Text(this.tokTotal)
-          .fontSize(10)
-          .fontColor('#A0A0A0')
-        Text('·')
-          .fontSize(10)
-          .fontColor('#606060')
-        Text(`命中 ${this.cacheRate}`)
-          .fontSize(10)
-          .fontColor('#A0A0A0')
+        if (this.tokTotal !== '') {
+          Text(this.tokTotal)
+            .fontSize(10)
+            .fontColor('#A0A0A0')
+        }
+        if (this.tokTotal !== '' && this.cacheRate !== '') {
+          Text('·')
+            .fontSize(10)
+            .fontColor('#606060')
+        }
+        if (this.cacheRate !== '') {
+          Text(`命中 ${this.cacheRate}`)
+            .fontSize(10)
+            .fontColor('#A0A0A0')
+        }
         Blank()
         if (this.updatedAt !== '') {
           Text(this.updatedAt)
