@@ -55,6 +55,7 @@ import thermal from '@ohos.thermal';
 import workScheduler from '@ohos.resourceschedule.workScheduler';
 import unifiedDataChannel from '@ohos.data.unifiedDataChannel';
 import { SystemEventWatcher } from './SystemEventWatcher';
+import { MdnsAdvertiser } from './MdnsAdvertiser';
 import window from '@ohos.window';
 import display from '@ohos.display';
 import image from '@ohos.multimedia.image';
@@ -67,10 +68,12 @@ import { textRecognition } from '@kit.CoreVisionKit';
 import { statusBarManager, quickBarManager } from '@kit.DeskTopExtensionKit';
 import { localChatModel } from '@kit.DataAugmentationKit';
 import { textProcessing } from '@kit.NaturalLanguageKit';
-import { NativeInput } from './NativeInput';
+import { NativeInput, NativeScreenshot, RenderCardResult } from './NativeInput';
 import { textToSpeech } from '@kit.CoreSpeechKit';
 import { intelligence, distributedKVStore } from '@kit.ArkData';
 import { systemShare } from '@kit.ShareKit';
+import { accessibility } from '@kit.AccessibilityKit';
+import { deviceManager } from '@kit.DriverDevelopmentKit';
 import { abilityConnectionManager } from '@kit.DistributedServiceKit';
 import { emitter } from '@kit.BasicServicesKit';
 import { Callback } from '@ohos.base';
@@ -83,6 +86,23 @@ import { batteryInfo } from '@kit.BasicServicesKit';
 import abilityAccessCtrl, { Permissions } from '@ohos.abilityAccessCtrl';
 import { Driver, ON, Component } from '@ohos.UiTest';
 import DshFormAbility from '../formability/DshFormAbility';
+
+
+/** v5：注入闸与指针还原的结果（ArkTS 要求对象字面量对应已声明接口） */
+interface PointerOpResult {
+  ok: boolean;
+  code: number;
+  x: number;
+  y: number;
+  reason: string;
+}
+
+/** v5：注入被闸拦住时的返回体 */
+interface InjectionGateResult {
+  ok: boolean;
+  code: number;
+  reason: string;
+}
 
 const DOMAIN = 0x0000;
 const TAG = 'DshBridge';
@@ -194,6 +214,8 @@ export class BridgeAgent {
   private notificationSeq: number = 0;
   /** 常驻系统事件监听器（事件驱动自动化）。 */
   private eventWatcher: SystemEventWatcher = new SystemEventWatcher();
+  /** mDNS 广播：让手机壳在任意网络下发现桥的 LAN 地址（2026-10-12 去硬编码）。 */
+  private mdnsAdvertiser?: MdnsAdvertiser;
   /** commonEvent subscriber for notification-button presses (lazy, idempotent). */
   private actionSubscriber?: commonEventManager.CommonEventSubscriber;
 
@@ -219,6 +241,13 @@ export class BridgeAgent {
     });
     // 设备上下线是「事件源」：手机靠近/离开 PC 都值得让手机侧知道。
     this.startDeviceWatch();
+    // mDNS 广播已下沉到 node 桥（dsh-mobile-bridge/mdns-responder.mjs，
+    // 2026-10-12 探针实证 PTR/SRV/TXT/A 全对）：桥活=可被发现，不再依赖壳存活。
+    // ArkTS 侧 MdnsAdvertiser 保留为备份实现，需要时取消下面注释即可回切。
+    // if (!this.mdnsAdvertiser) {
+    //   this.mdnsAdvertiser = new MdnsAdvertiser(this.abilityContext);
+    // }
+    // this.mdnsAdvertiser.start();
     this.schedule(0);
   }
 
@@ -298,6 +327,7 @@ export class BridgeAgent {
       clearTimeout(this.timer);
       this.timer = -1;
     }
+    this.mdnsAdvertiser?.stop();
     hilog.info(DOMAIN, TAG, '%{public}s', 'bridge stopped');
   }
 
@@ -1355,15 +1385,31 @@ export class BridgeAgent {
     if (action === 'ndkInjectionStatus') {
       return this.ndkResult(NativeInput.queryInjectionStatus());
     }
+    // v5：三个注入 action 统一走「空闲闸」——用户正在操作时不插队（args.force=true 跳过）
     if (action === 'ndkInjectKey') {
-      return this.ndkResult(NativeInput.injectKey(args['keyCode'] as number, args['action'] as number));
+      return this.ndkInjectKey(args);
     }
     if (action === 'ndkInjectMouse') {
       return this.ndkInjectMouse(args);
     }
     if (action === 'ndkInjectTouch') {
-      return this.ndkResult(NativeInput.injectTouch(args['action'] as number, args['x'] as number,
-        args['y'] as number, (args['fingerId'] as number) ?? 0));
+      return this.ndkInjectTouch(args);
+    }
+    // DDK：枚举外接 HID 设备（ACCESS_EXTENSIONAL_DEVICE_DRIVER，normal 级）
+    if (action === 'driverDevices') {
+      return Promise.resolve(this.driverDevices());
+    }
+    // DDK：HID 探针（打开设备 + 读原始报文；需 ACCESS_DDK_HID ACL）
+    if (action === 'hidProbe') {
+      return Promise.resolve(JSON.stringify(NativeInput.hidProbe(
+        this.numberArg(args, 'deviceId'),
+        args['interfaceIndex'] === undefined ? 0 : this.numberArg(args, 'interfaceIndex'))));
+    }
+    if (action === 'ndkPointerSave') {
+      return Promise.resolve(JSON.stringify(this.savePointer()));
+    }
+    if (action === 'ndkPointerRestore') {
+      return Promise.resolve(JSON.stringify(this.restorePointer()));
     }
     if (action === 'ndkFunctionKeyState') {
       return this.ndkResult(NativeInput.getFunctionKeyState(args['keyCode'] as number));
@@ -1396,6 +1442,15 @@ export class BridgeAgent {
     if (action === 'ndkMouseWatch') {
       return this.ndkMouseWatch(args);
     }
+    if (action === 'ndkTouchWatch') {
+      return this.ndkTouchWatch(args);
+    }
+    if (action === 'ndkAxisWatch') {
+      return this.ndkAxisWatch(args);
+    }
+    if (action === 'ndkMonitorWhileRecording') {
+      return this.ndkMonitorWhileRecording(args);
+    }
     if (action === 'ndkTraceBegin') {
       return this.ndkResult(NativeInput.traceBegin(this.stringArg(args, 'name')));
     }
@@ -1404,6 +1459,24 @@ export class BridgeAgent {
     }
     if (action === 'ndkScreenshot') {
       return this.ndkScreenshot(args);
+    }
+    // ===== NDK v3：窗口信息与按窗/整屏截图（napi_extras_v3.cpp）=====
+    if (action === 'ndkMainWindows') {
+      return this.ndkMainWindows();
+    }
+    if (action === 'ndkDisplayCapture') {
+      return this.ndkDisplayCapture(args);
+    }
+    if (action === 'ndkWindowSnapshot') {
+      return this.ndkWindowSnapshot(args);
+    }
+    if (action === 'ndkProbeChildProcess') {
+      return Promise.resolve(JSON.stringify(NativeInput.probeNativeChildProcess()));
+    }
+    // 无障碍服务自检：系统是否认得我们的 accessibility 扩展、总开关是否打开
+    // 注意：action 名不能以 "a11y" 开头——bridge-server 会按该前缀把它路由到无障碍通道。
+    if (action === 'accessibilityStatus') {
+      return this.a11yStatus();
     }
     if (action === 'watchProbe') {
       return this.watchProbe(args);
@@ -1602,6 +1675,12 @@ export class BridgeAgent {
     }
     if (action === 'dsoStatus') {
       return this.dsoStatus();
+    }
+    if (action === 'collabProbe') {
+      return this.collabProbe(args);
+    }
+    if (action === 'collabNotify') {
+      return this.collabNotify(args);
     }
     return Promise.reject(new Error('unsupported action: ' + action));
   }
@@ -2150,19 +2229,33 @@ export class BridgeAgent {
    * UIContext.getComponentSnapshot(). args: {text?} → PNG in filesDir.
    */
   private async offscreenRender(args: Record<string, Object>): Promise<string> {
+    // v4（2026-10-12）：改走 NDK native_drawing 离屏渲染。
+    // 旧实现用 componentSnapshot.createFromBuilder，在非组件宿主上下文必炸
+    // （Cannot read property observeComponentCreation2 of undefined），已废弃。
     const text: string = this.stringArg(args, 'text') || 'DSH offscreen render';
+    const subtitle: string = this.stringArg(args, 'subtitle') || new Date().toLocaleString();
+    const width: number = args['width'] === undefined ? 720 : this.numberArg(args, 'width');
+    const height: number = args['height'] === undefined ? 320 : this.numberArg(args, 'height');
     const path: string = this.abilityContext.filesDir + '/offscreen-' + Date.now().toString() + '.png';
-    const builder: CustomBuilder = (): void => { DshOffscreenCard(text); };
-    const win = await window.getLastWindow(this.abilityContext);
-    const pixmap: image.PixelMap =
-      await win.getUIContext().getComponentSnapshot().createFromBuilder(builder, 100);
-    const packer = image.createImagePacker();
     const file = fileIo.openSync(path,
       fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
-    await packer.packToFile(pixmap, file.fd, { format: 'image/png', quality: 95 });
-    fileIo.closeSync(file);
+    let code = -1;
+    let outW = width;
+    let outH = height;
+    try {
+      const r: RenderCardResult = NativeInput.renderCardToFd(file.fd, width, height, text, subtitle, 0);
+      code = r.code;
+      outW = r.width;
+      outH = r.height;
+    } finally {
+      fileIo.closeSync(file);
+    }
+    if (code !== 0) {
+      return '{"ok":false,"code":' + code.toString() + ',"via":"native_drawing"}';
+    }
     const st: fileIo.Stat = fileIo.statSync(path);
-    return '{"ok":true,"bytes":' + st.size.toString() + ',"path":"' + this.esc(path) + '"}';
+    return '{"ok":true,"bytes":' + st.size.toString() + ',"width":' + outW.toString() +
+      ',"height":' + outH.toString() + ',"path":"' + this.esc(path) + '","via":"native_drawing"}';
   }
 
   /**
@@ -2206,27 +2299,181 @@ export class BridgeAgent {
   }
 
   /**
+   * 无障碍自检（判「设置里为什么没有我们的服务」的权威 oracle）。
+   * - masterOpen：无障碍总开关（关着时「已安装的服务」可能为空/不可用）
+   * - installed：系统登记为已安装的无障碍扩展（含本应用则声明 OK）
+   * - enabled：当前已启用的服务
+   */
+  private a11yStatus(): Promise<string> {
+    let masterOpen = false;
+    let installed: accessibility.AccessibilityAbilityInfo[] = [];
+    let enabled: accessibility.AccessibilityAbilityInfo[] = [];
+    let err = '';
+    try {
+      masterOpen = accessibility.isOpenAccessibilitySync();
+    } catch (e) {
+      err = 'isOpenAccessibilitySync: ' + this.text(e);
+    }
+    try {
+      installed = accessibility.getAccessibilityExtensionListSync('all', 'install');
+    } catch (e) {
+      err = err + ' | install: ' + this.text(e);
+    }
+    try {
+      enabled = accessibility.getAccessibilityExtensionListSync('all', 'enable');
+    } catch (e) {
+      err = err + ' | enable: ' + this.text(e);
+    }
+    return Promise.resolve('{"masterOpen":' + (masterOpen ? 'true' : 'false') +
+      ',"installedCount":' + installed.length.toString() +
+      ',"enabledCount":' + enabled.length.toString() +
+      ',"installed":' + JSON.stringify(installed) +
+      ',"enabled":' + JSON.stringify(enabled) +
+      ',"error":' + JSON.stringify(err) + '}');
+  }
+
+  /**
    * NDK 鼠标注入（免 ACL，需先 ndkRequestInjection 授权一次）。
    * args: {op:'move'|'button'|'axis', x, y, button?, down?, axisType?, axisValue?}
    */
-  private ndkInjectMouse(args: Record<string, Object>): Promise<string> {
+  // ===== v5：注入类操作的「空闲闸 + 鼠标位置还原」 =====
+  // 目标：用户正在用电脑时不插队（闸），动完把鼠标放回原处（还原）。
+  // 闸参数（三个注入 action 通用）：idleMs 默认 1200（要求至少空闲这么久）、waitMs 默认 0（等待上限）、force=true 跳过闸。
+  // 返回码：0=通过；-7=用户忙未注入（user_busy）。
+  private savedPointerX: number = -1;
+  private savedPointerY: number = -1;
+
+  /** 空闲闸：返回 0=可注入；-7=用户忙 */
+  private async injectionGate(args: Record<string, Object>): Promise<number> {
+    if (args['force'] === true) {
+      return 0;
+    }
+    const idleMs: number = args['idleMs'] === undefined ? 1200 : this.numberArg(args, 'idleMs');
+    const waitMs: number = args['waitMs'] === undefined ? 0 : this.numberArg(args, 'waitMs');
+    const deadline: number = Date.now() + waitMs;
+    while (true) {
+      const since: number = NativeInput.getIntervalSinceLastInput();
+      if (since < 0) {
+        return 0;   // 读不到（INTERCEPT 未授）→ 不拦，交调用方决定
+      }
+      if (since >= idleMs) {
+        return 0;
+      }
+      if (Date.now() >= deadline) {
+        return -7;
+      }
+      await this.sleep(200);
+    }
+  }
+
+  /**
+   * DDK 设备枚举（触控板驱动第一步）：列出外接 USB HID 设备。
+   * 需要 ACCESS_EXTENSIONAL_DEVICE_DRIVER（normal，声明即得）。
+   * 用途：确认 Magic Trackpad 是否出现在 DDK 视野内（决定能否写驱动）。
+   */
+  private driverDevices(): string {
+    try {
+      const devs = deviceManager.queryDevices(deviceManager.BusType.USB);
+      let arr = '[';
+      for (let i = 0; i < devs.length; i++) {
+        const d = devs[i];
+        arr += (i > 0 ? ',' : '') + '{"deviceId":' + d.deviceId.toString() +
+          ',"busType":' + d.busType.toString() +
+          ',"description":"' + this.esc(d.description) + '"}';
+      }
+      return '{"ok":true,"count":' + devs.length.toString() + ',"devices":' + arr + ']}';
+    } catch (e) {
+      return '{"ok":false,"error":"' + this.esc(this.text(e)) + '"}';
+    }
+  }
+
+  /** 记下当前鼠标位置（供 ndkPointerRestore 用） */
+  private savePointer(): PointerOpResult {
+    const p = NativeInput.getPointerLocation();
+    this.savedPointerX = p.x;
+    this.savedPointerY = p.y;
+    const out: PointerOpResult = { ok: p.ok, code: p.code, x: p.x, y: p.y, reason: '' };
+    return out;
+  }
+
+  /** 把鼠标移回最近一次 ndkPointerSave 的位置 */
+  private restorePointer(): PointerOpResult {
+    if (this.savedPointerX < 0 || this.savedPointerY < 0) {
+      const miss: PointerOpResult = { ok: false, code: -8, x: -1, y: -1, reason: 'no_saved_pointer' };
+      return miss;
+    }
+    const r = NativeInput.injectMouseMove(Math.round(this.savedPointerX), Math.round(this.savedPointerY));
+    const done: PointerOpResult = { ok: r.ok, code: r.code, x: this.savedPointerX, y: this.savedPointerY, reason: '' };
+    return done;
+  }
+
+  private async ndkInjectKey(args: Record<string, Object>): Promise<string> {
+    const gate: number = await this.injectionGate(args);
+    if (gate !== 0) {
+      const busy: InjectionGateResult = { ok: false, code: gate, reason: 'user_busy' };
+      return JSON.stringify(busy);
+    }
+    return this.ndkResult(NativeInput.injectKey(args['keyCode'] as number, args['action'] as number));
+  }
+
+  private async ndkInjectTouch(args: Record<string, Object>): Promise<string> {
+    const gate: number = await this.injectionGate(args);
+    if (gate !== 0) {
+      const busy: InjectionGateResult = { ok: false, code: gate, reason: 'user_busy' };
+      return JSON.stringify(busy);
+    }
+    return this.ndkResult(NativeInput.injectTouch(args['action'] as number, args['x'] as number,
+      args['y'] as number, (args['fingerId'] as number) ?? 0));
+  }
+
+  /**
+   * 鼠标注入（带闸）。
+   * args: {op:'move'|'button'|'axis', x, y, button?, down?, axisType?, axisValue?,
+   *        restore?:boolean, idleMs?, waitMs?, force?}
+   * restore=true → 动完把鼠标移回操作前的位置（单次点击场景推荐）。
+   * 多步序列（拖拽 down→move→up）不要逐步 restore，改用 ndkPointerSave / ndkPointerRestore 包住整段。
+   */
+  private async ndkInjectMouse(args: Record<string, Object>): Promise<string> {
     const op: string = this.stringArg(args, 'op');
     const x: number = this.numberArg(args, 'x');
     const y: number = this.numberArg(args, 'y');
-    if (op === 'move') {
-      return this.ndkResult(NativeInput.injectMouseMove(x, y));
+    const gate: number = await this.injectionGate(args);
+    if (gate !== 0) {
+      const busy: InjectionGateResult = { ok: false, code: gate, reason: 'user_busy' };
+      return JSON.stringify(busy);
     }
-    if (op === 'button') {
+    const restore: boolean = args['restore'] === true;
+    let backX = -1;
+    let backY = -1;
+    if (restore) {
+      const before = NativeInput.getPointerLocation();
+      if (before.ok) {
+        backX = Math.round(before.x);
+        backY = Math.round(before.y);
+      }
+    }
+    let result: Object;
+    if (op === 'move') {
+      result = NativeInput.injectMouseMove(x, y);
+    } else if (op === 'button') {
       const button: number = args['button'] === undefined ? 0 : this.numberArg(args, 'button');
       const down: boolean = args['down'] !== false;
-      return this.ndkResult(NativeInput.injectMouseButton(x, y, button, down));
-    }
-    if (op === 'axis') {
+      result = NativeInput.injectMouseButton(x, y, button, down);
+    } else if (op === 'axis') {
       const axisType: number = args['axisType'] === undefined ? 0 : this.numberArg(args, 'axisType');
       const axisValue: number = args['axisValue'] === undefined ? 1 : this.numberArg(args, 'axisValue');
-      return this.ndkResult(NativeInput.injectMouseAxis(x, y, axisType, axisValue));
+      result = NativeInput.injectMouseAxis(x, y, axisType, axisValue);
+    } else {
+      throw new Error('ndkInjectMouse: op must be move|button|axis');
     }
-    throw new Error('ndkInjectMouse: op must be move|button|axis');
+    let restored = false;
+    if (restore && backX >= 0 && backY >= 0) {
+      NativeInput.injectMouseMove(backX, backY);
+      restored = true;
+    }
+    const body: string = JSON.stringify(result);
+    return '{"result":' + body + ',"restored":' + (restored ? 'true' : 'false') +
+      ',"restoredTo":[' + backX.toString() + ',' + backY.toString() + ']}';
   }
 
   /**
@@ -2250,6 +2497,137 @@ export class BridgeAgent {
   }
 
   /**
+   * 触摸/触控板多指监视（INPUT_MONITORING）。
+   *
+   * 为什么不复用 ndkMouseWatch：OH_Input_AddMouseEventMonitor 文档明确
+   * 「仅当屏幕录制场景在用时可调用，否则调用不生效」（实测 ret=201），
+   * 而 OH_Input_AddTouchEventMonitor 无此前置条件——触控板多指事件在 PC 上
+   * 按触摸设备上报（SOURCE_TYPE_TOUCHPAD=3），要观察多指手势必须走这条。
+   *
+   * args: { op: 'start'|'stop' }。事件以 `touch_event` 打到宿主 /ui-events
+   * （GET http://127.0.0.1:3131/ui-events 可读）。
+   */
+  private ndkTouchWatch(args: Record<string, Object>): Promise<string> {
+    const op: string = this.stringArg(args, 'op');
+    if (op === 'start') {
+      const r = NativeInput.startTouchMonitor((e) => {
+        this.postEvent('touch_event', JSON.stringify({
+          action: e.action, fingerId: e.fingerId, toolType: e.toolType,
+          displayId: e.displayId, windowId: e.windowId, pressure: e.pressure,
+          displayX: e.displayX, displayY: e.displayY,
+          globalX: e.globalX, globalY: e.globalY
+        }));
+      });
+      return this.ndkResult(r);
+    }
+    if (op === 'stop') {
+      return this.ndkResult(NativeInput.stopTouchMonitor());
+    }
+    throw new Error('ndkTouchWatch: op must be start|stop');
+  }
+
+  /**
+   * 轴事件监视（INPUT_MONITORING）——**触控板双指的真正通路**。
+   *
+   * 2026-10-12 纠正：touch 事件属于触摸屏/笔（本机有触摸屏），触控板的双指数据走
+   * axis 事件——`OH_Input_GetAxisEventSourceType` 是唯一能读来源的 getter
+   * （1=MOUSE 2=TOUCHSCREEN 3=TOUCHPAD）。轴事件只有 PINCH(1)/SCROLL(2) 两类、
+   * BEGIN/UPDATE/END 三态；三指/四指滑动不在轴模型里（系统 shell 消费）。
+   *
+   * args: { op: 'start'|'stop' } → 事件以 `axis_event` 打到宿主 /ui-events。
+   */
+  private ndkAxisWatch(args: Record<string, Object>): Promise<string> {
+    const op: string = this.stringArg(args, 'op');
+    if (op === 'start') {
+      const r = NativeInput.startAxisMonitor((e) => {
+        this.postEvent('axis_event', JSON.stringify({
+          action: e.action, eventType: e.eventType, sourceType: e.sourceType,
+          pinchValue: e.pinchValue, scrollValue: e.scrollValue,
+          displayId: e.displayId, windowId: e.windowId,
+          globalX: e.globalX, globalY: e.globalY,
+          displayX: e.displayX, displayY: e.displayY
+        }));
+      });
+      return this.ndkResult(r);
+    }
+    if (op === 'stop') {
+      return this.ndkResult(NativeInput.stopAxisMonitor());
+    }
+    throw new Error('ndkAxisWatch: op must be start|stop');
+  }
+
+  /**
+   * 探针（2026-10-12）：验证「屏幕录制场景在用」是否是 INPUT_MONITORING 监视器的前置条件。
+   *
+   * 背景：mouse/touch/axis 三个监视器在 INPUT_MONITORING 已授（aclProbe=granted）的前提下
+   * 一律返回 **201**；而 `OH_Input_AddMouseEventMonitor` 的文档明确写着
+   * 「This API can be called only when the screen recording scenario is in use.
+   *   Otherwise, the call does not take effect.」
+   * → 本探针把「开录屏 + 挂 axis 监视器」放进同一次调用（桥是串行执行，分两次调必然错过窗口）。
+   */
+  private async ndkMonitorWhileRecording(args: Record<string, Object>): Promise<string> {
+    const path: string = this.abilityContext.filesDir + '/monitor-while-recording.mp4';
+    const holdMs: number = args['seconds'] === undefined ? 25000 : this.numberArg(args, 'seconds') * 1000;
+    let recorder: media.AVScreenCaptureRecorder | null = null;
+    let opened: fileIo.File | null = null;
+    let code: number = -999;
+    let total: number = 0;
+    let byPad: number = 0;
+    let byMouse: number = 0;
+    let byScreen: number = 0;
+    const samples: string[] = [];
+    try {
+      recorder = await media.createAVScreenCaptureRecorder();
+      if (recorder === null) {
+        return '{"ok":false,"stage":"create"}';
+      }
+      opened = fileIo.openSync(path,
+        fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+      const config: media.AVScreenCaptureRecordConfig = { fd: opened.fd };
+      await recorder.init(config);
+      await recorder.startRecording();
+      await new Promise<void>((resolve: () => void) => { setTimeout(resolve, 1000); });
+      code = NativeInput.startAxisMonitor((e) => {
+        total = total + 1;
+        if (e.sourceType === 3) {
+          byPad = byPad + 1;
+        } else if (e.sourceType === 2) {
+          byScreen = byScreen + 1;
+        } else {
+          byMouse = byMouse + 1;
+        }
+        if (samples.length < 6) {
+          samples.push('t=' + e.eventType.toString() + ',s=' + e.sourceType.toString() +
+            ',a=' + e.action.toString() + ',p=' + e.pinchValue.toFixed(2) +
+            ',sc=' + e.scrollValue.toFixed(2));
+        }
+        this.postEvent('axis_event', JSON.stringify({
+          action: e.action, eventType: e.eventType, sourceType: e.sourceType,
+          pinchValue: e.pinchValue, scrollValue: e.scrollValue,
+          globalX: e.globalX, globalY: e.globalY
+        }));
+      }).code;
+      await new Promise<void>((resolve: () => void) => { setTimeout(resolve, holdMs); });
+      return '{"ok":true,"monitorCode":' + code.toString() + ',"total":' + total.toString() +
+        ',"byTouchpad":' + byPad.toString() + ',"byMouse":' + byMouse.toString() +
+        ',"byTouchscreen":' + byScreen.toString() + ',"samples":' + JSON.stringify(samples) + '}';
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      return '{"ok":false,"error":"' + this.esc(m.slice(0, 150)) + '","monitorCode":' + code.toString() +
+        ',"total":' + total.toString() + '}';
+    } finally {
+      try { NativeInput.stopAxisMonitor(); } catch { /* ignore */ }
+      if (opened !== null) {
+        try { fileIo.closeSync(opened); } catch { /* ignore */ }
+      }
+      if (recorder !== null) {
+        try { await recorder.stopRecording(); } catch { /* ignore */ }
+        try { await recorder.release(); } catch { /* ignore */ }
+      }
+    }
+  }
+
+  /**
    * NDK 进程内单帧截屏（OH_AVScreenCapture，RGBA8888）。
    * 替代「ArkTS截图→沙箱文件→fetchFile base64」三跳链：直接在 native 层拿 buffer。
    * args: {width?, height?}（缺省 3840×2160）→ RGBA 原始数据写 filesDir，宿主用 fetchFile 取回。
@@ -2258,17 +2636,57 @@ export class BridgeAgent {
     const width: number = args['width'] === undefined ? 3840 : this.numberArg(args, 'width');
     const height: number = args['height'] === undefined ? 2160 : this.numberArg(args, 'height');
     const shot = await NativeInput.captureScreenshot(width, height);
+    return this.saveRgbaShot(shot, 'ndk-capture');
+  }
+
+  /** 把 NDK 截图结果（RGBA buffer）落盘到 filesDir，返回给宿主的元数据 JSON */
+  private saveRgbaShot(shot: NativeScreenshot, prefix: string): string {
     if (shot.code !== 0 || shot.data === undefined) {
-      return JSON.stringify({ ok: false, code: shot.code, width: shot.width, height: shot.height });
+      return JSON.stringify({
+        ok: false, code: shot.code, width: shot.width, height: shot.height
+      });
     }
-    const path: string = this.abilityContext.filesDir + '/ndk-capture-' + Date.now().toString() + '.rgba';
+    const path: string = this.abilityContext.filesDir + '/' + prefix + '-' + Date.now().toString() + '.rgba';
     const file = fileIo.openSync(path, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
     fileIo.writeSync(file.fd, shot.data);
     fileIo.closeSync(file);
     return JSON.stringify({
       ok: true, code: shot.code, width: shot.width, height: shot.height,
-      stride: shot.stride, size: shot.size, format: 'RGBA8888', path: path
+      stride: shot.stride, size: shot.size, path: path
     });
+  }
+
+  /**
+   * v3：所有主窗信息（OH_WindowManager_GetAllMainWindowInfo @21，需 CUSTOM_SCREEN_CAPTURE）。
+   * → {code, count, windows:[{displayId, windowId, showing, label}]}
+   */
+  private ndkMainWindows(): Promise<string> {
+    return Promise.resolve(JSON.stringify(NativeInput.getAllMainWindows()));
+  }
+
+  /**
+   * v3：轻量整屏截图（OH_NativeDisplayManager_CaptureScreenPixelmap @14）。
+   * args: {displayId?}（缺省 0=默认屏）→ RGBA 落盘，宿主 fetchFile 取回
+   */
+  private async ndkDisplayCapture(args: Record<string, Object>): Promise<string> {
+    const displayId: number = args['displayId'] === undefined ? 0 : this.numberArg(args, 'displayId');
+    const shot = await NativeInput.captureDisplay(displayId);
+    return this.saveRgbaShot(shot, 'ndk-display');
+  }
+
+  /**
+   * v3：按窗截图（OH_WindowManager_GetMainWindowSnapshot @21，需 CUSTOM_SCREEN_CAPTURE）。
+   * args: {windowId, width, height}（width/height 用窗口 rect 尺寸；windowId 从 ndkMainWindows 取）
+   */
+  private async ndkWindowSnapshot(args: Record<string, Object>): Promise<string> {
+    const windowId: number = this.numberArg(args, 'windowId');
+    const width: number = args['width'] === undefined ? 0 : this.numberArg(args, 'width');
+    const height: number = args['height'] === undefined ? 0 : this.numberArg(args, 'height');
+    if (windowId === 0) {
+      throw new Error('ndkWindowSnapshot: "windowId" is required (see ndkMainWindows)');
+    }
+    const shot = await NativeInput.captureWindow(windowId, width, height);
+    return this.saveRgbaShot(shot, 'ndk-window');
   }
 
   /**
@@ -4288,6 +4706,145 @@ export class BridgeAgent {
       return value as string;
     }
     return JSON.stringify(value);
+  }
+
+  // ---------------------------------------------------------------------------
+  // collabProbe（2026-10-12 追加）：abilityConnectionManager 全链路探针。
+  // 与 acs* 系列的区别：ConnectOptions 显式补齐 needSendStream/needReceiveStream/
+  // needSendBigData —— 10-12 实测只给 needSendData 时 connect 能 isConnected:true，
+  // 但 sendMessage 报 401「message channel not exit」（native 层 unwrap 缺这几个字段）。
+  // args: { deviceId, abilityName?, text? }，一次完成 create→connect→sendMessage。
+  // ---------------------------------------------------------------------------
+
+  private async collabProbe(args: Record<string, Object>): Promise<string> {
+    const deviceId = this.stringArg(args, 'deviceId');
+    if (deviceId.length === 0) {
+      return '{"ok":false,"error":"deviceId is required (from listDistributedDevices)"}';
+    }
+    const abilityRaw = this.stringArg(args, 'abilityName');
+    const textRaw = this.stringArg(args, 'text');
+    const msgText = textRaw.length > 0 ? textRaw : 'collabProbe-ping';
+    try {
+      const peer: abilityConnectionManager.PeerInfo = {
+        deviceId: deviceId,
+        bundleName: 'com.example.dshdesktop',
+        moduleName: 'entry',
+        abilityName: abilityRaw.length > 0 ? abilityRaw : 'EntryAbility'
+      };
+      const options = {
+        needSendData: true,
+        needSendStream: false,
+        needReceiveStream: false,
+        needSendBigData: true
+      } as abilityConnectionManager.ConnectOptions;
+      const sessionId: number = abilityConnectionManager.createAbilityConnectionSession(
+        'dsh_session', this.abilityContext, peer, options);
+      abilityConnectionManager.on('receiveMessage', sessionId,
+        (info: abilityConnectionManager.EventCallbackInfo) => {
+          this.postBridgeEvent('collabProbeMsg',
+            JSON.stringify({ sessionId: sessionId, msg: info.msg ?? '' }));
+        });
+      const result: abilityConnectionManager.ConnectResult =
+        await abilityConnectionManager.connect(sessionId);
+      if (!result.isConnected) {
+        return '{"ok":true,"stage":"connect","isConnected":false,"errorCode":' +
+          (result.errorCode !== undefined ? result.errorCode.toString() : '-1') +
+          ',"reason":"' + this.esc(result.reason ?? '') + '","sessionId":' + sessionId.toString() + '}';
+      }
+      // 等消息通道就绪
+      await new Promise<void>((resolve: () => void) => {
+        setTimeout(() => {
+          resolve();
+        }, 2000);
+      });
+      let sendResult = '';
+      try {
+        await abilityConnectionManager.sendMessage(sessionId, msgText);
+        sendResult = 'ok';
+      } catch (sendErr) {
+        sendResult = this.text(sendErr);
+      }
+      return '{"ok":true,"stage":"send","isConnected":true,"sessionId":' + sessionId.toString() +
+        ',"send":"' + this.esc(sendResult) + '","msg":"' + this.esc(msgText) + '"}';
+    } catch (err) {
+      return '{"ok":false,"error":"' + this.esc(this.text(err)) + '"}';
+    }
+  }
+
+  // collabNotify（2026-10-12）：WS 通道零客户端时的原生兜底通知。
+  // 链路：mobile-bridge /notify（hub.size===0）→ 桥 collabNotify → collab 会话
+  // sendMessage(JSON) → 手机壳 EntryAbility.receiveMessage → 系统通知。
+  // args: { deviceId?, title, body, level? }；deviceId 缺省取第一个在线可信设备。
+  // ---------------------------------------------------------------------------
+  private async collabNotify(args: Record<string, Object>): Promise<string> {
+    const title = this.stringArg(args, 'title');
+    const body = this.stringArg(args, 'body');
+    const level = this.stringArg(args, 'level');
+    let deviceId = this.stringArg(args, 'deviceId');
+    if (deviceId.length === 0) {
+      try {
+        const dm: distributedDeviceManager.DeviceManager =
+          distributedDeviceManager.createDeviceManager(this.abilityContext.abilityInfo.bundleName);
+        const list: distributedDeviceManager.DeviceBasicInfo[] = dm.getAvailableDeviceListSync();
+        if (list.length > 0) {
+          deviceId = list[0].deviceId;
+        }
+      } catch (e) {
+        return '{"ok":false,"error":"device list failed: ' + this.esc(this.text(e)) + '"}';
+      }
+    }
+    if (deviceId.length === 0) {
+      return '{"ok":false,"error":"no available trusted device"}';
+    }
+    const payload: string = JSON.stringify({
+      type: 'notify',
+      title: title.length > 0 ? title : 'DSH',
+      body: body,
+      level: level.length > 0 ? level : 'info',
+      ts: Date.now(),
+      from: 'collab'
+    });
+    let sessionId = -1;
+    try {
+      const peer: abilityConnectionManager.PeerInfo = {
+        deviceId: deviceId,
+        bundleName: 'com.example.dshdesktop',
+        moduleName: 'entry',
+        abilityName: 'EntryAbility'
+      };
+      const options = {
+        needSendData: true,
+        needSendStream: false,
+        needReceiveStream: false,
+        needSendBigData: true
+      } as abilityConnectionManager.ConnectOptions;
+      sessionId = abilityConnectionManager.createAbilityConnectionSession(
+        'dsh_session', this.abilityContext, peer, options);
+      const result: abilityConnectionManager.ConnectResult =
+        await abilityConnectionManager.connect(sessionId);
+      if (!result.isConnected) {
+        return '{"ok":false,"stage":"connect","errorCode":' +
+          (result.errorCode !== undefined ? result.errorCode.toString() : '-1') +
+          ',"reason":"' + this.esc(result.reason ?? '') + '"}';
+      }
+      // 等消息通道就绪（同 collabProbe 实测值）
+      await new Promise<void>((resolve: () => void) => {
+        setTimeout(() => {
+          resolve();
+        }, 2000);
+      });
+      await abilityConnectionManager.sendMessage(sessionId, payload);
+      return '{"ok":true,"via":"collab","sessionId":' + sessionId.toString() + '}';
+    } catch (err) {
+      return '{"ok":false,"error":"' + this.esc(this.text(err)) + '"}';
+    } finally {
+      if (sessionId >= 0) {
+        try {
+          abilityConnectionManager.disconnect(sessionId);
+          abilityConnectionManager.destroyAbilityConnectionSession(sessionId);
+        } catch { /* 会话可能已塌，忽略 */ }
+      }
+    }
   }
 }
 

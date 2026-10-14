@@ -240,6 +240,98 @@ node bridge/bridge-server.mjs call '{"action":"requestScreenCapture"}'
   （`Cannot read property dumpLayout of null`）→ 本机 HAP 内跑不了 UiTest，仍要走 hdc。
 - **输入拦截/全局注入**：system_core/system_basic 权限墙，见 skill `harmonyos-pc-control`。
 
+## 第四阶段：Core Vision Kit OCR（2026-10-10 实测可用）
+
+`@kit.CoreVisionKit` 的文字识别是**纯 ArkTS API**（SDK 里没有 native/NAPI 对应物），所以 node 侧够不到
+→ 加一个 action 让 HAP 代跑。本机 syscap 已确认包含 `SystemCapability.AI.OCR.TextRecognition`。
+
+### action
+
+| 动作 | 入参 | 说明 |
+|---|---|---|
+| `ocrImage` | `base64`（或 `path`，应用沙箱内绝对路径） | 返回 `{ok,width,height,elapsedMs,value,lines:[{text,box:[[x,y]×4]}]}` |
+
+```bash
+# 任意图片 OCR（推荐用封装脚本）
+node bridge/ocr.mjs shot.png            # 逐行文本
+node bridge/ocr.mjs shot.png --boxes    # 每行带 "x,y,w,h"
+node bridge/ocr.mjs shot.png --json     # 原始结果
+
+# 读屏 OCR：listMainWindows → snapshotWindow → fetchFile → ocrImage 全自动
+node bridge/ocr-screen.mjs              # 当前所有 showing 窗口（默认最多 3 个）
+node bridge/ocr-screen.mjs 349,84       # 指定 windowId
+```
+
+### 实测
+
+```
+$ node bridge/ocr.mjs sample.png
+DSH 能力接入测试
+OCR works on HarmonyOS PC
+文字识别2026-10-10
+[ocr] 1000x320 in 118ms, 3 lines
+
+$ node bridge/ocr-screen.mjs
+===== window 479 (多屏协同) — 677x1596, 316ms =====
+21:18 / DSH Desktop / 移动工作台 / 继续对话 / 新会话 / …
+```
+
+⇒ 从此"读屏取字"不再依赖 `Ctrl+A/Ctrl+C + testhelper get-pastedata`，也不受 canvas 限制。
+
+### 三条实现约束
+
+1. **只吃 `RGBA_8888`**：解码要带 `desiredPixelFormat: image.PixelMapFormat.RGBA_8888`。
+2. **`init()` / `release()` 要配对**（since 12）；无需任何权限（d.ts 无 `@permission`）。
+3. ArkTS 无 `Buffer`：base64 用 `util.Base64Helper.decodeSync`，再 `bytes.buffer as ArrayBuffer` 喂 `createImageSource`。
+
+## 第五阶段：PC 状态栏 / 快捷栏（Desktop Extension Kit，2026-10-10 实测）
+
+`@kit.DeskTopExtensionKit` **仅 PC/2in1 生效**，**零权限**（进度环用 `SET_ABILITY_INSTANCE_INFO`，本应用已声明）。
+
+### 状态栏（statusBarManager）
+
+| 动作 | 入参 | 说明 |
+|---|---|---|
+| `statusBarAdd` | `title?` `hoverTips?` `menu?` | 把 DSH 图标接入状态栏。`menu` 形如 `"新会话:new;状态:status"`（≤20 项） |
+| `statusBarRemove` | — | 移除图标（无前台窗口时会报 1010710004） |
+| `statusBarStatus` | — | 是否已添加 + 左键/右键点击计数 + 设备态是否支持 |
+
+```bash
+node bridge/bridge-server.mjs call '{"action":"statusBarAdd","args":{"title":"DSH","hoverTips":"DSH 智能体","menu":"新会话:new;显示状态:status"}}'
+node bridge/bridge-server.mjs call '{"action":"statusBarStatus"}'
+```
+
+- `quickOperation.abilityName` 故意留空 → **左键点击走 `statusBarIconClick` 事件**（不弹 UIExtension 面板）；
+  桥在该事件里计数并把 DSH 壳窗口拉到前台；右键菜单项走 `rightMenuClick`（`notifyOnly:true` + `menuCode`）。
+- 图标：`resources/rawfile/dsh_statusbar_{white,black}.png`（24vp 建议尺寸）。
+- **判据**：`isStatusBarCapabilitySupported()`（API 26）为 true 才有显示效果；为 false 时 `addToStatusBar` 不报错但**界面上无效果**（官方指南原文）。
+
+### 快捷栏（quickBarManager）
+
+| 动作 | 入参 | 说明 |
+|---|---|---|
+| `quickBarAdd` | `taskName?` `taskDetail?` `abilityName?` `moduleName?` | 首次自动建 `DSH` 分类，再加任务 |
+| `quickBarList` | — | 列出分类与任务 |
+| `quickBarStatus` | — | `isQuickBarCapabilitySupported()` |
+| `quickBarProgress` | `completed` `total` `state?` | 进度环：`total<=0` 清除；state 1 正常/2 暂停/3 错误 |
+
+### 实测（2026-10-10）
+
+```
+statusBarStatus   -> {"deviceStateSupported":true,"syscap":true}
+statusBarAdd      -> {"ok":true,"menuItems":2,"deviceStateSupported":true}
+statusBarRemove   -> {"ok":true,"added":false}
+quickBarStatus    -> {"deviceStateSupported":true,"syscap":true}
+quickBarAdd       -> {"categoryId":1,"taskId":1,"taskName":"DSH 智能体"}
+quickBarList      -> 读回 categoryId 1 + taskId 1
+quickBarProgress  -> {"completed":3,"total":10}
+```
+
+### 两个坑
+
+1. **`getCustomCategories` 在应用还没有分类时抛 `Category not found`** —— 这是首次运行的正常态，不是错误；要 catch 后再 `addCustomCategory`。
+2. **状态栏是浮层**：窗口全屏时会被盖住，截图容易误判"没生效"；判断是否生效要用 `statusBarStatus` 的点击计数（点一下图标，计数 +1）。
+
 ## 第二阶段：无障碍扩展（读界面 / 点控件）
 
 `uitest` / `snapshot_display` 对本应用域是 SELinux 死封，所以"读别人界面、点别人按钮"只能走系统正规通道：**无障碍扩展**（`AccessibilityExtensionAbility`）。

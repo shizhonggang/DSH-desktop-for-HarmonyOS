@@ -12,6 +12,11 @@
     "pages": "$profile:main_pages",
     "requestPermissions": [
       {
+        "name": "ohos.permission.ACCESS_EXTENSIONAL_DEVICE_DRIVER",
+        "reason": "$string:dsh_ddk_reason",
+        "usedScene": { "abilities": ["EntryAbility"], "when": "inuse" }
+      },
+      {
         "name": "ohos.permission.INTERNET",
         "reason": "$string:permission_internet_reason",
         "usedScene": {
@@ -28,6 +33,567 @@
         // harmonyos-pc-control/reference/window-boundary-confirmed.md。
         "name": "ohos.permission.CUSTOM_SCREEN_CAPTURE",
         "reason": "$string:permission_screen_capture_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 日历读：通过 DataShare(datashare://calendardata) 在应用内直读日程，免 hdc。
+        "name": "ohos.permission.READ_CALENDAR",
+        "reason": "$string:permission_read_calendar_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 日历写：应用内增删改日程。
+        "name": "ohos.permission.WRITE_CALENDAR",
+        "reason": "$string:permission_write_calendar_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 长任务防息屏/锁屏：自动化执行期间保持屏幕可用。
+        "name": "ohos.permission.TIMEOUT_SCREENOFF_DISABLE_LOCK",
+        "reason": "$string:permission_timeout_screenoff_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 后台保活：常驻桥接/自动化守护进程。
+        "name": "ohos.permission.KEEP_BACKGROUND_RUNNING",
+        "reason": "$string:permission_keep_bg_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 粘性公共事件：接收系统广播类事件（normal 级，可能绕过 CommonEventService 的 ACL 限制）。
+        "name": "ohos.permission.COMMONEVENT_STICKY",
+        "reason": "$string:permission_commonevent_sticky_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 代理提醒：系统级定时任务，不依赖常驻进程。
+        "name": "ohos.permission.PUBLISH_AGENT_REMINDER",
+        "reason": "$string:permission_agent_reminder_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 文档目录直读：应用内访问公共文档目录，免 hdc 文件搬运。
+        "name": "ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY",
+        "reason": "$string:permission_docs_dir_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 下载目录直读：应用内访问公共下载目录。
+        "name": "ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY",
+        "reason": "$string:permission_download_dir_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 查询应用信息：识别前台/已装应用，辅助窗口与应用感知。
+        "name": "ohos.permission.GET_BUNDLE_INFO",
+        "reason": "$string:permission_bundle_info_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 自身窗口置顶：助手面板保持可见。
+        "name": "ohos.permission.WINDOW_TOPMOST",
+        "reason": "$string:permission_window_topmost_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 窗口透明与阴影：半透明助手面板。
+        "name": "ohos.permission.SET_WINDOW_TRANSPARENT",
+        "reason": "$string:permission_window_transparent_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 隐私窗口：防止助手窗口内容被截屏/录屏。
+        "name": "ohos.permission.PRIVACY_WINDOW",
+        "reason": "$string:permission_privacy_window_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 锁定光标到窗口：操作引导时限制光标范围。
+        "name": "ohos.permission.LOCK_WINDOW_CURSOR",
+        "reason": "$string:permission_lock_cursor_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 键盘控制：输入法类键盘事件处理（唯一 normal 级输入权限）。
+        "name": "ohos.permission.INPUT_KEYBOARD_CONTROLLER",
+        "reason": "$string:permission_keyboard_controller_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 手势检测：识别用户手势以触发自动化。
+        "name": "ohos.permission.DETECT_GESTURE",
+        "reason": "$string:permission_detect_gesture_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 蓝牙访问：管理与连接蓝牙外设（键鼠等）。
+        "name": "ohos.permission.ACCESS_BLUETOOTH",
+        "reason": "$string:permission_access_bluetooth_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 发现蓝牙设备。
+        "name": "ohos.permission.DISCOVER_BLUETOOTH",
+        "reason": "$string:permission_discover_bluetooth_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 使用蓝牙外设。
+        "name": "ohos.permission.USE_BLUETOOTH",
+        "reason": "$string:permission_use_bluetooth_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 读取网络状态：判断在线情况以决定自动化策略。
+        "name": "ohos.permission.GET_NETWORK_INFO",
+        "reason": "$string:permission_get_network_info_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 读取 Wi-Fi 信息。
+        "name": "ohos.permission.GET_WIFI_INFO",
+        "reason": "$string:permission_get_wifi_info_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 振动反馈：操作确认提示。
+        "name": "ohos.permission.VIBRATE",
+        "reason": "$string:permission_vibrate_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 退出前回调：自动化任务优雅收尾。
+        "name": "ohos.permission.PREPARE_APP_TERMINATE",
+        "reason": "$string:permission_prepare_terminate_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 持久化数据：保存自动化配置与状态。
+        "name": "ohos.permission.STORE_PERSISTENT_DATA",
+        "reason": "$string:permission_store_persistent_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 获取文件图标：文件列表展示。
+        "name": "ohos.permission.GET_FILE_ICON",
+        "reason": "$string:permission_file_icon_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 读取媒体文件：访问图片/音视频。
+        "name": "ohos.permission.READ_MEDIA",
+        "reason": "$string:permission_read_media_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 写入媒体文件：保存截图/录制产物。
+        "name": "ohos.permission.WRITE_MEDIA",
+        "reason": "$string:permission_write_media_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 摄像头：视觉输入（扫描/识别场景）。
+        "name": "ohos.permission.CAMERA",
+        "reason": "$string:permission_camera_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 麦克风：语音输入。
+        "name": "ohos.permission.MICROPHONE",
+        "reason": "$string:permission_microphone_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 崩溃转储：故障取证与诊断。
+        "name": "ohos.permission.ALLOW_COREDUMP",
+        "reason": "$string:permission_allow_coredump_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 清理后台进程：释放系统资源。
+        "name": "ohos.permission.CLEAN_BACKGROUND_PROCESSES",
+        "reason": "$string:permission_clean_bg_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 设置 Ability 实例信息：多实例管理。
+        "name": "ohos.permission.SET_ABILITY_INSTANCE_INFO",
+        "reason": "$string:permission_ability_instance_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 剪贴板直读（ACL 已批准）：应用内读取系统剪贴板内容，用于跨应用数据搬运。
+        "name": "ohos.permission.READ_PASTEBOARD",
+        "reason": "$string:permission_read_pasteboard_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 读取 Ability 信息（ACL 已批准）：识别前台/运行中的应用与窗口归属。
+        "name": "ohos.permission.GET_ABILITY_INFO",
+        "reason": "$string:permission_get_ability_info_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 输入监听（试用 ACL，2026-10-16 到期）：⚠️ 已授但本 SDK 无 inputMonitor 模块，声明仅为探针保留，当前不可用。
+        "name": "ohos.permission.INPUT_MONITORING",
+        "reason": "$string:permission_trial_acl_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 输入拦截（试用 ACL）：⚠️ 已授未用——本 SDK 注入 API（inputEventClient）实际要的是 CONTROL_DEVICE，此项无对应公开 API，仅探针保留。
+        "name": "ohos.permission.INTERCEPT_INPUT_EVENT",
+        "reason": "$string:permission_trial_acl_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 屏幕录制（试用 ACL）：自动化取证与操作回放的连续录屏。
+        "name": "ohos.permission.CUSTOM_SCREEN_RECORDING",
+        "reason": "$string:permission_trial_acl_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 设备控制（试用 ACL）：自动化测试期的设备级控制操作。
+        "name": "ohos.permission.CONTROL_DEVICE",
+        "reason": "$string:permission_trial_acl_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 打印：调用系统打印服务输出文件（knowledge/14 #13）。
+        "name": "ohos.permission.PRINT",
+        "reason": "$string:permission_trial_acl_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 最近任务快照管理（试用 ACL）：自动化取证读取任务快照。
+        "name": "ohos.permission.MANAGE_RECENT_SNAPSHOT",
+        "reason": "$string:permission_trial_acl_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 运行动态代码：支持自动化的热更新与脚本化执行。
+                "name": "ohos.permission.RUN_DYN_CODE",
+        "reason": "$string:permission_run_dyn_code_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 持久化文件访问授权：跨重启保留目录授权，避免重复申请。
+        "name": "ohos.permission.FILE_ACCESS_PERSIST",
+        "reason": "$string:permission_file_access_persist_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 设置网络状态：自动化中切换网络/代理以配合任务。
+        "name": "ohos.permission.SET_NETWORK_INFO",
+        "reason": "$string:permission_set_network_info_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 设置 Wi-Fi 信息：自动化中切换网络连接。
+        "name": "ohos.permission.SET_WIFI_INFO",
+        "reason": "$string:permission_set_wifi_info_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 读取免打扰状态：据此决定是否弹出提示，避免打扰用户。
+        "name": "ohos.permission.GET_DONOTDISTURB_STATE",
+        "reason": "$string:permission_dnd_state_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 读取免打扰策略：与免打扰状态配合判断打扰时机。
+        "name": "ohos.permission.ACCESS_NOTIFICATION_POLICY",
+        "reason": "$string:permission_notification_policy_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 后台省电模式：配合长时任务做保活策略判断。
+        "name": "ohos.permission.BACKGROUND_MANAGER_POWER_SAVE_MODE",
+        "reason": "$string:permission_bg_power_save_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 锁屏下启动窗口：支持锁屏场景的自动化提醒。
+        "name": "ohos.permission.START_WINDOW_BELOW_LOCK_SCREEN",
+        "reason": "$string:permission_window_below_lock_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 保护锁屏数据：保证锁屏相关内容不被未授权读取。
+        "name": "ohos.permission.PROTECT_SCREEN_LOCK_DATA",
+        "reason": "$string:permission_protect_lock_data_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 自定义菜单图标：适配助手界面的菜单呈现。
+        "name": "ohos.permission.CUSTOMIZE_MENU_ICON",
+        "reason": "$string:permission_customize_menu_icon_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 生物识别：敏感操作前的身份校验。
+        "name": "ohos.permission.ACCESS_BIOMETRIC",
+        "reason": "$string:permission_biometric_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // 分布式数据同步：与其他设备协同传输任务数据。
+        "name": "ohos.permission.DISTRIBUTED_DATASYNC",
+        "reason": "$string:permission_distributed_datasync_reason",
         "usedScene": {
           "abilities": [
             "EntryAbility"
@@ -72,6 +638,13 @@
             "value": "center"
           }
         ],
+        // 长时任务声明：让应用可在后台持续运行（桥接层/自动化不被挂起）。
+        // 权限 KEEP_BACKGROUND_RUNNING 是 normal 级 + system_grant（已授予，无需 ACL）；
+        // PC/2in1 上用 TASK_KEEPING 也不需要 ACL（仅非 PC 需 KEEP_BACKGROUND_RUNNING_SYSTEM）。
+        // 见 skill: harmonyos-pc-control/reference/permission-tiers.md
+        "backgroundModes": [
+          "taskKeeping"
+        ],
         "skills": [
           {
             "entities": [
@@ -99,10 +672,14 @@
       },
       {
         // 无障碍服务：让 dsh 读取其他应用界面并点击控件。
-        // 需要用户在「设置 → 辅助功能」里手动开启。
-        // metadata.name 若被 DevEco 标红，用它的补全列表校正（备选：ohos.extension.accessibility）。
+        // 需要用户在「设置 → 辅助功能」里手动开启（先开无障碍总开关）。
+        // metadata.name 已对照官方示例确认：ohos.accessibleability
+        //   （applications_app_samples/.../AccessibilityExtAbility/module.json5）
+        // label/description 是设置「已安装的服务」列表里显示的名字，缺了会显示为空。
         "name": "DshAccessibilityAbility",
         "srcEntry": "./ets/accessibility/DshAccessibilityAbility.ets",
+        "label": "$string:dsh_a11y_label",
+        "description": "$string:dsh_a11y_desc",
         "type": "accessibility",
         "exported": false,
         "metadata": [
@@ -123,6 +700,15 @@
             "resource": "$profile:form_config"
           }
         ]
+      },
+      {
+        // 划词助手：用户在任意应用选中文本后系统回调本扩展，DSH 取到划词内容并弹
+        // 一个小面板（复制 / 问 DSH / 关闭）。仅 PC/2in1，API 24+，零权限。
+        // 需用户在「设置 → 系统 → 智慧划词」打开开关并把本应用选为划词应用。
+        "name": "DshSelectionAbility",
+        "srcEntry": "./ets/selection/SelectionExtAbility.ets",
+        "type": "selection",
+        "exported": false
       }
     ]
   }

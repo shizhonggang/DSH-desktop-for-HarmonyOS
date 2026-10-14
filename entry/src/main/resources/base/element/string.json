@@ -1,6 +1,10 @@
 {
   "string": [
     {
+      "name": "dsh_ddk_reason",
+      "value": "枚举外接 HID 设备（触控板驱动）"
+    },
+    {
       "name": "module_desc",
       "value": "module description"
     },
@@ -43,6 +47,198 @@
     {
       "name": "form_large_desc",
       "value": "Large DSH dashboard with task list and status bar"
+    },
+    {
+      "name": "permission_read_calendar_reason",
+      "value": "用于读取您的日程信息，以便助手整理与提醒日程。"
+    },
+    {
+      "name": "permission_write_calendar_reason",
+      "value": "用于创建或修改日程，以便助手代为安排会议与待办。"
+    },
+    {
+      "name": "permission_timeout_screenoff_reason",
+      "value": "用于在长任务执行期间保持屏幕可用，避免任务被息屏中断。"
+    },
+    {
+      "name": "permission_keep_bg_reason",
+      "value": "用于在后台维持助手连接，确保自动化任务不中断。"
+    },
+    {
+      "name": "permission_commonevent_sticky_reason",
+      "value": "用于接收系统状态变化通知，以便及时响应环境变化。"
+    },
+    {
+      "name": "permission_agent_reminder_reason",
+      "value": "用于设置定时提醒，以便在指定时间自动执行任务。"
+    },
+    {
+      "name": "permission_docs_dir_reason",
+      "value": "用于读写公共文档目录，以便处理您的文档文件。"
+    },
+    {
+      "name": "permission_download_dir_reason",
+      "value": "用于读写公共下载目录，以便处理下载的文件。"
+    },
+    {
+      "name": "permission_bundle_info_reason",
+      "value": "用于查询已安装应用信息，以便识别与切换应用。"
+    },
+    {
+      "name": "permission_window_topmost_reason",
+      "value": "用于将助手窗口保持在最前面，方便操作。"
+    },
+    {
+      "name": "permission_window_transparent_reason",
+      "value": "用于设置助手窗口的透明度与阴影效果。"
+    },
+    {
+      "name": "permission_privacy_window_reason",
+      "value": "用于防止助手窗口内容被截屏或录屏，保护隐私。"
+    },
+    {
+      "name": "permission_lock_cursor_reason",
+      "value": "用于在引导操作时限制光标范围，避免误操作。"
+    },
+    {
+      "name": "permission_keyboard_controller_reason",
+      "value": "用于处理键盘输入事件，提升输入效率。"
+    },
+    {
+      "name": "permission_detect_gesture_reason",
+      "value": "用于识别手势操作，以便通过手势触发助手功能。"
+    },
+    {
+      "name": "permission_access_bluetooth_reason",
+      "value": "用于连接与管理蓝牙外设，如键盘鼠标。"
+    },
+    {
+      "name": "permission_discover_bluetooth_reason",
+      "value": "用于发现附近的蓝牙设备。"
+    },
+    {
+      "name": "permission_use_bluetooth_reason",
+      "value": "用于使用蓝牙外设。"
+    },
+    {
+      "name": "permission_get_network_info_reason",
+      "value": "用于读取网络连接状态，以便调整任务策略。"
+    },
+    {
+      "name": "permission_get_wifi_info_reason",
+      "value": "用于读取 Wi-Fi 连接信息。"
+    },
+    {
+      "name": "permission_vibrate_reason",
+      "value": "用于在操作完成时提供振动反馈。"
+    },
+    {
+      "name": "permission_prepare_terminate_reason",
+      "value": "用于在应用退出前保存状态，保证任务完整结束。"
+    },
+    {
+      "name": "permission_store_persistent_reason",
+      "value": "用于持久化保存助手的配置与运行状态。"
+    },
+    {
+      "name": "permission_file_icon_reason",
+      "value": "用于获取文件图标，优化文件列表显示。"
+    },
+    {
+      "name": "permission_read_media_reason",
+      "value": "用于读取本机图片与音视频文件。"
+    },
+    {
+      "name": "permission_write_media_reason",
+      "value": "用于保存截图、录制等媒体产物。"
+    },
+    {
+      "name": "permission_camera_reason",
+      "value": "用于拍摄或扫描，作为视觉输入。"
+    },
+    {
+      "name": "permission_microphone_reason",
+      "value": "用于语音输入与控制。"
+    },
+    {
+      "name": "permission_allow_coredump_reason",
+      "value": "用于在异常崩溃时生成转储文件，便于问题定位。"
+    },
+    {
+      "name": "permission_clean_bg_reason",
+      "value": "用于清理后台进程，释放系统资源。"
+    },
+    {
+      "name": "permission_ability_instance_reason",
+      "value": "用于管理助手内部的 Ability 实例。"
+    },
+    {
+      "name": "permission_read_pasteboard_reason",
+      "value": "用于读取剪贴板内容，以便在应用之间搬运文本与链接。"
+    },
+    {
+      "name": "permission_trial_acl_reason",
+      "value": "自动化能力试用（输入监听/拦截、屏幕录制、设备控制、多任务快照），用于自动化测试与取证。"
+    },
+    {
+      "name": "permission_get_ability_info_reason",
+      "value": "用于查询应用与 Ability 信息，以便识别与切换前台应用。"
+    },
+    {
+      "name": "permission_run_dyn_code_reason",
+      "value": "用于运行动态代码，支持助手功能的灵活更新。"
+    },
+    {
+      "name": "permission_file_access_persist_reason",
+      "value": "用于持久化保存文件访问授权，避免重复询问。"
+    },
+    {
+      "name": "permission_set_network_info_reason",
+      "value": "用于在自动化任务中切换网络连接。"
+    },
+    {
+      "name": "permission_set_wifi_info_reason",
+      "value": "用于在自动化任务中切换 Wi-Fi 连接。"
+    },
+    {
+      "name": "permission_dnd_state_reason",
+      "value": "用于读取免打扰状态，避免在您休息时打扰。"
+    },
+    {
+      "name": "permission_notification_policy_reason",
+      "value": "用于读取免打扰策略，合理安排提醒时机。"
+    },
+    {
+      "name": "permission_bg_power_save_reason",
+      "value": "用于读取省电模式状态，调整后台任务策略。"
+    },
+    {
+      "name": "permission_window_below_lock_reason",
+      "value": "用于在锁屏状态下展示必要的提醒窗口。"
+    },
+    {
+      "name": "permission_protect_lock_data_reason",
+      "value": "用于保护锁屏相关数据不被未授权访问。"
+    },
+    {
+      "name": "permission_customize_menu_icon_reason",
+      "value": "用于自定义菜单图标，优化界面呈现。"
+    },
+    {
+      "name": "permission_biometric_reason",
+      "value": "用于在敏感操作前进行身份验证。"
+    },
+    {
+      "name": "permission_distributed_datasync_reason",
+      "value": "用于在您的多设备间同步任务数据。"
+    },
+    {
+      "name": "dsh_a11y_label",
+      "value": "DshDesktop 无障碍服务"
+    },
+    {
+      "name": "dsh_a11y_desc",
+      "value": "让 dsh 读取当前界面控件并按指令点击/滑动；仅在你在设置中开启后运行"
     }
   ]
 }

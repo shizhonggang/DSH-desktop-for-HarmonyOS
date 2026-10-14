@@ -167,6 +167,226 @@ static napi_value StopMouseMonitor(napi_env env, napi_callback_info info) {
     return MakeInt(env, ret);
 }
 
+// ---------- 5b. 全局触摸事件监听（INPUT_MONITORING；触控板多指走这条路） ----------
+// 为什么另开一路：OH_Input_AddMouseEventMonitor 的文档明确「仅当屏幕录制场景在用时可调用，
+// 否则调用不生效」（实测 ret=201，曾被误读成权限墙）；而 OH_Input_AddTouchEventMonitor
+// 没有这条前置条件。触控板多指事件在 PC 上按触摸设备上报（SOURCE_TYPE_TOUCHPAD=3）。
+struct TouchEventData {
+    int32_t action;
+    int32_t fingerId;
+    int32_t toolType;
+    int32_t displayId;
+    int32_t windowId;
+    double pressure;
+    int32_t displayX;
+    int32_t displayY;
+    int32_t globalX;
+    int32_t globalY;
+    int64_t actionTime;
+};
+
+static napi_threadsafe_function g_touchTsfn = nullptr;
+
+static void OnTouchEvent(const Input_TouchEvent *ev) {
+    if (g_touchTsfn == nullptr || ev == nullptr) {
+        return;
+    }
+    TouchEventData *data = new TouchEventData{
+        OH_Input_GetTouchEventAction(ev),
+        OH_Input_GetTouchEventFingerId(ev),
+        static_cast<int32_t>(OH_Input_GetTouchEventToolType(ev)),
+        OH_Input_GetTouchEventDisplayId(ev),
+        OH_Input_GetTouchEventWindowId(ev),
+        OH_Input_GetTouchEventPressure(ev),
+        OH_Input_GetTouchEventDisplayX(ev),
+        OH_Input_GetTouchEventDisplayY(ev),
+        OH_Input_GetTouchEventGlobalX(ev),
+        OH_Input_GetTouchEventGlobalY(ev),
+        OH_Input_GetTouchEventActionTime(ev),
+    };
+    napi_call_threadsafe_function(g_touchTsfn, data, napi_tsfn_nonblocking);
+}
+
+static void TouchCallJs(napi_env env, napi_value jsCb, void *context, void *raw) {
+    (void)context;
+    TouchEventData *data = static_cast<TouchEventData *>(raw);
+    if (data == nullptr) {
+        return;
+    }
+    napi_value obj;
+    napi_create_object(env, &obj);
+    napi_set_named_property(env, obj, "action", MakeInt(env, data->action));
+    napi_set_named_property(env, obj, "fingerId", MakeInt(env, data->fingerId));
+    napi_set_named_property(env, obj, "toolType", MakeInt(env, data->toolType));
+    napi_set_named_property(env, obj, "displayId", MakeInt(env, data->displayId));
+    napi_set_named_property(env, obj, "windowId", MakeInt(env, data->windowId));
+    napi_value pressure;
+    napi_create_double(env, data->pressure, &pressure);
+    napi_set_named_property(env, obj, "pressure", pressure);
+    napi_set_named_property(env, obj, "displayX", MakeInt(env, data->displayX));
+    napi_set_named_property(env, obj, "displayY", MakeInt(env, data->displayY));
+    napi_set_named_property(env, obj, "globalX", MakeInt(env, data->globalX));
+    napi_set_named_property(env, obj, "globalY", MakeInt(env, data->globalY));
+    napi_value undefined;
+    napi_get_undefined(env, &undefined);
+    napi_value argv[1] = {obj};
+    napi_call_function(env, undefined, jsCb, 1, argv, nullptr);
+    delete data;
+}
+
+// startTouchMonitor(jsCallback) → Input_Result
+static napi_value StartTouchMonitor(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 1) {
+        return MakeInt(env, INPUT_PARAMETER_ERROR);
+    }
+    if (g_touchTsfn == nullptr) {
+        napi_value resourceName;
+        napi_create_string_utf8(env, "dshTouchMonitor", NAPI_AUTO_LENGTH, &resourceName);
+        napi_status st = napi_create_threadsafe_function(env, args[0], nullptr, resourceName, 0, 1,
+                                                         nullptr, nullptr, nullptr, TouchCallJs, &g_touchTsfn);
+        if (st != napi_ok) {
+            return MakeInt(env, INPUT_SERVICE_EXCEPTION);
+        }
+    }
+    int32_t ret = OH_Input_AddTouchEventMonitor(OnTouchEvent);
+    OH_LOG_INFO(LOG_APP, "AddTouchEventMonitor ret=%{public}d", ret);
+    return MakeInt(env, ret);
+}
+
+static napi_value StopTouchMonitor(napi_env env, napi_callback_info info) {
+    int32_t ret = OH_Input_RemoveTouchEventMonitor(OnTouchEvent);
+    if (g_touchTsfn != nullptr) {
+        napi_release_threadsafe_function(g_touchTsfn, napi_tsfn_release);
+        g_touchTsfn = nullptr;
+    }
+    OH_LOG_INFO(LOG_APP, "RemoveTouchEventMonitor ret=%{public}d", ret);
+    return MakeInt(env, ret);
+}
+
+// ---------- 5c. 全局轴事件监听（INPUT_MONITORING；触控板多指走这条路） ----------
+// 关键区分（2026-10-12 纠正）：touch 事件 = 触摸屏/笔（本机有触摸屏），
+// 触控板的双指数据走 **axis 事件** —— 全 SDK 里唯一能读 sourceType 的 getter 就在 axis 上
+// （SOURCE_TYPE_MOUSE=1 / TOUCHSCREEN=2 / TOUCHPAD=3）。轴事件类型只有 PINCH(1) 与 SCROLL(2)，
+// 动作 BEGIN/UPDATE/END —— 三指/四指滑动不在轴事件模型里（系统 shell 自行消费）。
+struct AxisEventData {
+    int32_t action;      // 0=CANCEL 1=BEGIN 2=UPDATE 3=END
+    int32_t eventType;   // 1=PINCH 2=SCROLL
+    int32_t sourceType;  // 1=MOUSE 2=TOUCHSCREEN 3=TOUCHPAD
+    double pinchValue;
+    double scrollValue;
+    int32_t displayId;
+    int32_t windowId;
+    int32_t globalX;
+    int32_t globalY;
+    double displayX;
+    double displayY;
+};
+
+static napi_threadsafe_function g_axisTsfn = nullptr;
+
+static void OnAxisEvent(const Input_AxisEvent *ev) {
+    if (g_axisTsfn == nullptr || ev == nullptr) {
+        return;
+    }
+    InputEvent_AxisAction action = AXIS_ACTION_CANCEL;
+    InputEvent_AxisEventType etype = AXIS_EVENT_TYPE_SCROLL;
+    InputEvent_SourceType stype = SOURCE_TYPE_MOUSE;
+    double pinch = 0.0;
+    double scroll = 0.0;
+    int32_t displayId = -1;
+    int32_t windowId = -1;
+    int32_t gx = 0;
+    int32_t gy = 0;
+    float dx = 0.0f;
+    float dy = 0.0f;
+    OH_Input_GetAxisEventAction(ev, &action);
+    OH_Input_GetAxisEventType(ev, &etype);
+    OH_Input_GetAxisEventSourceType(ev, &stype);
+    OH_Input_GetAxisEventAxisValue(ev, AXIS_TYPE_PINCH, &pinch);
+    OH_Input_GetAxisEventAxisValue(ev, AXIS_TYPE_SCROLL_VERTICAL, &scroll);
+    OH_Input_GetAxisEventDisplayId(ev, &displayId);
+    OH_Input_GetAxisEventWindowId(ev, &windowId);
+    OH_Input_GetAxisEventGlobalX(ev, &gx);
+    OH_Input_GetAxisEventGlobalY(ev, &gy);
+    OH_Input_GetAxisEventDisplayX(ev, &dx);
+    OH_Input_GetAxisEventDisplayY(ev, &dy);
+    AxisEventData *data = new AxisEventData{
+        static_cast<int32_t>(action), static_cast<int32_t>(etype), static_cast<int32_t>(stype),
+        pinch, scroll, displayId, windowId, gx, gy,
+        static_cast<double>(dx), static_cast<double>(dy),
+    };
+    napi_call_threadsafe_function(g_axisTsfn, data, napi_tsfn_nonblocking);
+}
+
+static void AxisCallJs(napi_env env, napi_value jsCb, void *context, void *raw) {
+    (void)context;
+    AxisEventData *data = static_cast<AxisEventData *>(raw);
+    if (data == nullptr) {
+        return;
+    }
+    napi_value obj;
+    napi_create_object(env, &obj);
+    napi_set_named_property(env, obj, "action", MakeInt(env, data->action));
+    napi_set_named_property(env, obj, "eventType", MakeInt(env, data->eventType));
+    napi_set_named_property(env, obj, "sourceType", MakeInt(env, data->sourceType));
+    napi_value pinch;
+    napi_create_double(env, data->pinchValue, &pinch);
+    napi_set_named_property(env, obj, "pinchValue", pinch);
+    napi_value scroll;
+    napi_create_double(env, data->scrollValue, &scroll);
+    napi_set_named_property(env, obj, "scrollValue", scroll);
+    napi_set_named_property(env, obj, "displayId", MakeInt(env, data->displayId));
+    napi_set_named_property(env, obj, "windowId", MakeInt(env, data->windowId));
+    napi_set_named_property(env, obj, "globalX", MakeInt(env, data->globalX));
+    napi_set_named_property(env, obj, "globalY", MakeInt(env, data->globalY));
+    napi_value dx;
+    napi_create_double(env, data->displayX, &dx);
+    napi_set_named_property(env, obj, "displayX", dx);
+    napi_value dy;
+    napi_create_double(env, data->displayY, &dy);
+    napi_set_named_property(env, obj, "displayY", dy);
+    napi_value undefined;
+    napi_get_undefined(env, &undefined);
+    napi_value argv[1] = {obj};
+    napi_call_function(env, undefined, jsCb, 1, argv, nullptr);
+    delete data;
+}
+
+// startAxisMonitor(jsCallback) → Input_Result（ForAll：PINCH + SCROLL 都收）
+static napi_value StartAxisMonitor(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 1) {
+        return MakeInt(env, INPUT_PARAMETER_ERROR);
+    }
+    if (g_axisTsfn == nullptr) {
+        napi_value resourceName;
+        napi_create_string_utf8(env, "dshAxisMonitor", NAPI_AUTO_LENGTH, &resourceName);
+        napi_status st = napi_create_threadsafe_function(env, args[0], nullptr, resourceName, 0, 1,
+                                                         nullptr, nullptr, nullptr, AxisCallJs, &g_axisTsfn);
+        if (st != napi_ok) {
+            return MakeInt(env, INPUT_SERVICE_EXCEPTION);
+        }
+    }
+    int32_t ret = OH_Input_AddAxisEventMonitorForAll(OnAxisEvent);
+    OH_LOG_INFO(LOG_APP, "AddAxisEventMonitorForAll ret=%{public}d", ret);
+    return MakeInt(env, ret);
+}
+
+static napi_value StopAxisMonitor(napi_env env, napi_callback_info info) {
+    int32_t ret = OH_Input_RemoveAxisEventMonitorForAll(OnAxisEvent);
+    if (g_axisTsfn != nullptr) {
+        napi_release_threadsafe_function(g_axisTsfn, napi_tsfn_release);
+        g_axisTsfn = nullptr;
+    }
+    OH_LOG_INFO(LOG_APP, "RemoveAxisEventMonitorForAll ret=%{public}d", ret);
+    return MakeInt(env, ret);
+}
+
 // ---------- 7/8. HiTrace 打点（自动化延迟诊断；打点名出现在系统 trace 中） ----------
 static napi_value TraceBegin(napi_env env, napi_callback_info info) {
     size_t argc = 1;
@@ -330,6 +550,10 @@ napi_value RegisterDshNativeExtras(napi_env env, napi_value exports) {
         {"setPointerVisible", nullptr, SetPointerVisible, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"startMouseMonitor", nullptr, StartMouseMonitor, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"stopMouseMonitor", nullptr, StopMouseMonitor, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"startTouchMonitor", nullptr, StartTouchMonitor, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"stopTouchMonitor", nullptr, StopTouchMonitor, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"startAxisMonitor", nullptr, StartAxisMonitor, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"stopAxisMonitor", nullptr, StopAxisMonitor, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"traceBegin", nullptr, TraceBegin, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"traceEnd", nullptr, TraceEnd, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"captureScreenshot", nullptr, CaptureScreenshot, nullptr, nullptr, nullptr, napi_default, nullptr},

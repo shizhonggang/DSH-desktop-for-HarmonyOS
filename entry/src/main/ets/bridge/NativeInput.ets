@@ -28,6 +28,45 @@ export interface GetPointerStyleResult {
   style: number;
 }
 
+/** v3：主窗信息（OH_WindowManager_GetAllMainWindowInfo @21） */
+export interface NativeMainWindow {
+  displayId: number;
+  windowId: number;
+  showing: boolean;   // true=前台
+  label: string;      // 任务名
+}
+
+export interface ChildProcessProbe {
+  ret: number;            // 0=机制可用；801=不支持；16010004=多进程被禁；16010005=已在子进程
+  callbackCode: number;   // 异步回调带回的子进程启动结果（-999=尚未回调）
+}
+
+export interface HidProbeResult {
+  deviceId: number;
+  init: number;        // 0=成功
+  open: number;        // 0=成功；201=缺 ACCESS_DDK_HID（system_basic，需 ACL）
+  read: number;
+  bytesRead: number;
+  vendor?: number;
+  product?: number;
+  busType?: number;
+  hex?: string;        // 原始 HID 报文字节（前 64 字节）
+}
+
+export interface RenderCardResult {
+  code: number;        // 0=成功
+  width: number;
+  height: number;
+  titleLen: number;
+  subtitleLen: number;
+}
+
+export interface MainWindowsResult {
+  code: number;       // 0=成功；需 CUSTOM_SCREEN_CAPTURE
+  count: number;
+  windows: NativeMainWindow[];
+}
+
 export interface NativeScreenshot {
   code: number;      // 0=成功；负数/ErrCode=失败
   width: number;
@@ -43,6 +82,35 @@ export interface NativeMouseEvent {
   y: number;
   button: number;
   windowId: number;
+}
+
+/** 触摸事件（触摸屏/笔——本机有触摸屏；触控板不走这里）。 */
+export interface NativeTouchEvent {
+  action: number;      // InputEvent 动作码（0=DOWN 1=UP 2=MOVE 3=CANCEL…）
+  fingerId: number;    // 手指 id：多指时用于区分不同触点
+  toolType: number;    // 0=FINGER 1=PEN 2=RUBBER 3=BRUSH 4=PENCIL 5=AIRBRUSH 6=MOUSE 7=LENS
+  displayId: number;
+  windowId: number;
+  pressure: number;
+  displayX: number;
+  displayY: number;
+  globalX: number;
+  globalY: number;
+}
+
+/** 轴事件——**触控板双指的真正通路**（全 SDK 唯一能读 sourceType 的事件）。 */
+export interface NativeAxisEvent {
+  action: number;      // 0=CANCEL 1=BEGIN 2=UPDATE 3=END
+  eventType: number;   // 1=PINCH（捏合） 2=SCROLL（滚动）
+  sourceType: number;  // 1=MOUSE 2=TOUCHSCREEN 3=TOUCHPAD
+  pinchValue: number;
+  scrollValue: number;
+  displayId: number;
+  windowId: number;
+  globalX: number;
+  globalY: number;
+  displayX: number;
+  displayY: number;
 }
 
 /** libdshnative.so 的方法签名（与 cpp/napi_input.cpp + napi_extras.cpp 注册表一一对应） */
@@ -64,9 +132,22 @@ interface DshNativeModule {
   setPointerVisible(visible: number): number;
   startMouseMonitor(callback: (e: NativeMouseEvent) => void): number;
   stopMouseMonitor(): number;
+  /** 触摸/触控板多指监视（INPUT_MONITORING；无「必须录屏」前置条件，触控板手势走这条） */
+  startTouchMonitor(callback: (e: NativeTouchEvent) => void): number;
+  stopTouchMonitor(): number;
+  /** 轴事件监视（INPUT_MONITORING）：触控板双指的真正通路（sourceType=3=TOUCHPAD） */
+  startAxisMonitor(callback: (e: NativeAxisEvent) => void): number;
+  stopAxisMonitor(): number;
   traceBegin(name: string): number;
   traceEnd(): number;
   captureScreenshot(width: number, height: number): Promise<NativeScreenshot>;
+  // v3（napi_extras_v3.cpp）：窗口信息与按窗/整屏截图
+  getAllMainWindows(): MainWindowsResult;
+  captureDisplay(displayId: number): Promise<NativeScreenshot>;
+  captureWindow(windowId: number, width: number, height: number): Promise<NativeScreenshot>;
+  probeNativeChildProcess(): ChildProcessProbe;
+  renderCardToFd(fd: number, width: number, height: number, title: string, subtitle: string, accentArgb: number): RenderCardResult;
+  hidProbe(deviceId: number, interfaceIndex: number): HidProbeResult;
 }
 
 // cpp/types/libdshnative 的类型映射在本构建链上未被解析（退化成 any），
@@ -202,6 +283,37 @@ export class NativeInput {
     return { ok: code === 0, code };
   }
 
+  /**
+   * 启动触摸/触控板多指事件监听（INPUT_MONITORING）。
+   * 与鼠标监视器的区别：无「必须在录屏场景」的前置条件，触控板多指走这条。
+   */
+  static startTouchMonitor(callback: (e: NativeTouchEvent) => void): NativeResult {
+    const code = dshnative.startTouchMonitor(callback);
+    return { ok: code === 0, code };
+  }
+
+  /** 停止触摸事件监听 */
+  static stopTouchMonitor(): NativeResult {
+    const code = dshnative.stopTouchMonitor();
+    return { ok: code === 0, code };
+  }
+
+  /**
+   * 启动轴事件监听（INPUT_MONITORING）——**触控板双指的真正通路**。
+   * 事件里 `sourceType` 区分来源：1=鼠标 2=触摸屏 3=触控板；
+   * `eventType`：1=PINCH（捏合）2=SCROLL（滚动）；`action`：1=BEGIN 2=UPDATE 3=END。
+   */
+  static startAxisMonitor(callback: (e: NativeAxisEvent) => void): NativeResult {
+    const code = dshnative.startAxisMonitor(callback);
+    return { ok: code === 0, code };
+  }
+
+  /** 停止轴事件监听 */
+  static stopAxisMonitor(): NativeResult {
+    const code = dshnative.stopAxisMonitor();
+    return { ok: code === 0, code };
+  }
+
   /** HiTrace 打点开始（出现在系统 trace，自动化延迟诊断） */
   static traceBegin(name: string): NativeResult {
     const code = dshnative.traceBegin(name);
@@ -217,5 +329,41 @@ export class NativeInput {
   /** 进程内单帧截屏（OH_AVScreenCapture，RGBA8888 buffer；替代 ArkTS 截图三跳链） */
   static async captureScreenshot(width: number, height: number): Promise<NativeScreenshot> {
     return dshnative.captureScreenshot(width, height);
+  }
+
+  // ================= v3（napi_extras_v3.cpp）=================
+
+  /** 所有主窗信息：{displayId, windowId, showing(前后台), label(任务名)}，需 CUSTOM_SCREEN_CAPTURE */
+  static getAllMainWindows(): MainWindowsResult {
+    return dshnative.getAllMainWindows();
+  }
+
+  /** 轻量整屏截图（OH_NativeDisplayManager_CaptureScreenPixelmap，比 AVScreenCapture pipeline 轻） */
+  static async captureDisplay(displayId: number = 0): Promise<NativeScreenshot> {
+    return dshnative.captureDisplay(displayId);
+  }
+
+  /** 按窗截图（OH_WindowManager_GetMainWindowSnapshot，需 CUSTOM_SCREEN_CAPTURE；width/height 传窗口 rect 尺寸） */
+  static async captureWindow(windowId: number, width: number, height: number): Promise<NativeScreenshot> {
+    return dshnative.captureWindow(windowId, width, height);
+  }
+
+  /** NativeChildProcess 可用性探针（评估用；用不存在的 lib 名只探机制门槛） */
+  static probeNativeChildProcess(): ChildProcessProbe {
+    return dshnative.probeNativeChildProcess();
+  }
+
+  /** v5：HID DDK 探针（打开外接 HID + 非阻塞读一次原始报文；需 ACCESS_DDK_HID） */
+  static hidProbe(deviceId: number, interfaceIndex: number = 0): HidProbeResult {
+    return dshnative.hidProbe(deviceId, interfaceIndex);
+  }
+
+  /**
+   * v4：NDK 离屏渲染卡片并直接把 PNG 写进 fd（native_drawing + image_packer）。
+   * 零组件树、零窗口依赖——替代 ArkTS 的 createFromBuilder（后者在非组件宿主上下文必炸）。
+   */
+  static renderCardToFd(fd: number, width: number, height: number,
+                        title: string, subtitle: string, accentArgb: number = 0): RenderCardResult {
+    return dshnative.renderCardToFd(fd, width, height, title, subtitle, accentArgb);
   }
 }

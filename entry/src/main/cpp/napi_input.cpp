@@ -234,6 +234,12 @@ static napi_value UnlockCursor(napi_env env, napi_callback_info info) {
 // ---------- 模块注册 ----------
 // v2 增补能力（napi_extras.cpp，session-43e17adf）：在此合并注册到同一 exports
 extern napi_value RegisterDshNativeExtras(napi_env env, napi_value exports);
+// v3 窗口能力（napi_extras_v3.cpp，session-43e17adf）
+extern napi_value RegisterDshNativeV3(napi_env env, napi_value exports);
+// v4 离屏渲染（napi_extras_v4.cpp，session-43e17adf）
+extern napi_value RegisterDshNativeV4(napi_env env, napi_value exports);
+// v5 HID DDK 探针（napi_extras_v5.cpp，session-43e17adf）
+extern napi_value RegisterDshNativeV5(napi_env env, napi_value exports);
 
 EXTERN_C_START
 static napi_value Init(napi_env env, napi_value exports) {
@@ -251,6 +257,9 @@ static napi_value Init(napi_env env, napi_value exports) {
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     RegisterDshNativeExtras(env, exports);
+    RegisterDshNativeV3(env, exports);
+    RegisterDshNativeV4(env, exports);
+    RegisterDshNativeV5(env, exports);
     return exports;
 }
 EXTERN_C_END
